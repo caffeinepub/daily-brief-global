@@ -17,16 +17,26 @@ export interface Comment {
   'videoId' : bigint,
 }
 export type ExternalBlob = Uint8Array;
+export type Time = bigint;
+export type UserRole = { 'admin' : null } |
+  { 'user' : null } |
+  { 'guest' : null };
 export interface Video {
   'id' : bigint,
   'url' : string,
+  'status' : VideoStatus,
   'title' : string,
   'likeCount' : bigint,
   'thumbnail' : ExternalBlob,
-  'submittedAt' : bigint,
-  'platform' : string,
+  'submittedAt' : Time,
+  'platform' : { 'other' : null } |
+    { 'instagram' : null } |
+    { 'youtube' : null },
   'viewCount' : bigint,
 }
+export type VideoStatus = { 'pending' : null } |
+  { 'approved' : null } |
+  { 'rejected' : null };
 export interface _CaffeineStorageCreateCertificateResult {
   'method' : string,
   'blob_hash' : string,
@@ -54,14 +64,29 @@ export interface _SERVICE {
     _CaffeineStorageRefillResult
   >,
   '_caffeineStorageUpdateGatewayPrincipals' : ActorMethod<[], undefined>,
+  '_initializeAccessControlWithSecret' : ActorMethod<[string], undefined>,
   'addComment' : ActorMethod<[bigint, string], [] | [Comment]>,
+  'approveVideo' : ActorMethod<[bigint], undefined>,
+  'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
+  'getCallerUserRole' : ActorMethod<[], UserRole>,
   'getComments' : ActorMethod<[bigint], Array<Comment>>,
   'getFeaturedVideo' : ActorMethod<[], [] | [Video]>,
+  'getPendingVideos' : ActorMethod<[], Array<Video>>,
   'getVideos' : ActorMethod<[], Array<Video>>,
   'incrementViewCount' : ActorMethod<[bigint], [] | [Video]>,
+  'isCallerAdmin' : ActorMethod<[], boolean>,
   'likeVideo' : ActorMethod<[bigint], [] | [Video]>,
+  'rejectVideo' : ActorMethod<[bigint], undefined>,
   'submitVideo' : ActorMethod<
-    [string, string, string, ExternalBlob, bigint],
+    [
+      string,
+      string,
+      { 'other' : null } |
+        { 'instagram' : null } |
+        { 'youtube' : null },
+      ExternalBlob,
+      bigint,
+    ],
     Video
   >,
 }

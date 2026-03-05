@@ -1,3 +1,4 @@
+import { AdminPanel } from "@/components/app/AdminPanel";
 import { Footer } from "@/components/app/Footer";
 import { Header } from "@/components/app/Header";
 import { HeroSection } from "@/components/app/HeroSection";
@@ -7,8 +8,28 @@ import { Toaster } from "@/components/ui/sonner";
 import type { UIVideo } from "@/hooks/useQueries";
 import { useState } from "react";
 
+const isAdminRoute =
+  new URLSearchParams(window.location.search).get("admin") === "1";
+
 export default function App() {
   const [selectedVideo, setSelectedVideo] = useState<UIVideo | null>(null);
+
+  // Render admin panel if ?admin=1 is in the URL
+  if (isAdminRoute) {
+    return (
+      <>
+        <AdminPanel />
+        <Toaster
+          position="bottom-right"
+          toastOptions={{
+            className:
+              "bg-card border-border text-foreground font-bold text-xs uppercase tracking-wider",
+            style: { borderRadius: "2px" },
+          }}
+        />
+      </>
+    );
+  }
 
   const handleVideoSelect = (video: UIVideo) => {
     setSelectedVideo(video);

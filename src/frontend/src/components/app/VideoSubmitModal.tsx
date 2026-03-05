@@ -4,7 +4,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,98 +19,9 @@ import {
 import { motion } from "motion/react";
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ExternalBlob } from "../../backend";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-async function compressImage(file: File): Promise<Uint8Array<ArrayBuffer>> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      const MAX_W = 800;
-      const MAX_H = 450;
-      let w = img.width;
-      let h = img.height;
-      if (w > MAX_W || h > MAX_H) {
-        const ratio = Math.min(MAX_W / w, MAX_H / h);
-        w = Math.round(w * ratio);
-        h = Math.round(h * ratio);
-      }
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("Canvas not supported"));
-        return;
-      }
-      ctx.drawImage(img, 0, 0, w, h);
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            reject(new Error("Compression failed"));
-            return;
-          }
-          blob
-            .arrayBuffer()
-            .then((buf) => resolve(new Uint8Array(buf)))
-            .catch(reject);
-        },
-        "image/jpeg",
-        0.82,
-      );
-    };
-    img.onerror = reject;
-    img.src = objectUrl;
-  });
-}
-
-async function compressImageFromUrl(
-  imgUrl: string,
-): Promise<{ bytes: Uint8Array<ArrayBuffer>; previewUrl: string }> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const MAX_W = 800;
-      const MAX_H = 450;
-      let w = img.width;
-      let h = img.height;
-      if (w > MAX_W || h > MAX_H) {
-        const ratio = Math.min(MAX_W / w, MAX_H / h);
-        w = Math.round(w * ratio);
-        h = Math.round(h * ratio);
-      }
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("Canvas not supported"));
-        return;
-      }
-      ctx.drawImage(img, 0, 0, w, h);
-      const previewUrl = canvas.toDataURL("image/jpeg", 0.82);
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            reject(new Error("Compression failed"));
-            return;
-          }
-          blob
-            .arrayBuffer()
-            .then((buf) => resolve({ bytes: new Uint8Array(buf), previewUrl }))
-            .catch(reject);
-        },
-        "image/jpeg",
-        0.82,
-      );
-    };
-    img.onerror = () => reject(new Error("Failed to load image"));
-    img.src = imgUrl;
-  });
-}
 
 /** Extract YouTube video ID from various URL formats */
 function getYouTubeId(url: string): string | null {
@@ -126,49 +36,116 @@ function getYouTubeId(url: string): string | null {
   return null;
 }
 
-/** Build a proxy URL to bypass CORS for thumbnail fetching */
-function proxyUrl(direct: string): string {
-  return `https://corsproxy.io/?url=${encodeURIComponent(direct)}`;
+function detectPlatform(url: string): string {
+  if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
+  if (url.includes("instagram.com")) return "instagram";
+  return "other";
+}
+
+/** Convert image bytes to a compressed JPEG Uint8Array via canvas */
+async function blobToCompressedBytes(
+  blob: Blob,
+): Promise<Uint8Array<ArrayBuffer>> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const MAX_W = 800;
+      const MAX_H = 450;
+      let w = img.width || MAX_W;
+      let h = img.height || MAX_H;
+      if (w > MAX_W || h > MAX_H) {
+        const ratio = Math.min(MAX_W / w, MAX_H / h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Canvas not supported"));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (outBlob) => {
+          if (!outBlob) {
+            reject(new Error("Compression failed"));
+            return;
+          }
+          outBlob
+            .arrayBuffer()
+            .then((buf) =>
+              resolve(new Uint8Array(buf) as Uint8Array<ArrayBuffer>),
+            )
+            .catch(reject);
+        },
+        "image/jpeg",
+        0.82,
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Failed to load image"));
+    };
+    img.src = objectUrl;
+  });
+}
+
+/**
+ * Fetch image bytes from a URL.
+ * Tries direct fetch first (works when CORS allows it), then falls back
+ * to two different proxy services.
+ */
+async function fetchImageBytes(
+  directUrl: string,
+): Promise<{ bytes: Uint8Array<ArrayBuffer>; previewUrl: string }> {
+  const proxies = [
+    (u: string) =>
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+  ];
+
+  // Try direct first
+  const urls = [directUrl, ...proxies.map((p) => p(directUrl))];
+
+  let lastErr: unknown;
+  for (const url of urls) {
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!resp.ok) continue;
+      const blob = await resp.blob();
+      if (!blob.type.startsWith("image/") && blob.size < 100) continue;
+      const bytes = await blobToCompressedBytes(blob);
+      const previewUrl = URL.createObjectURL(blob);
+      return { bytes, previewUrl };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr ?? new Error("All fetch attempts failed");
 }
 
 async function fetchYouTubeThumbnail(
   videoId: string,
 ): Promise<{ bytes: Uint8Array<ArrayBuffer>; previewUrl: string }> {
-  // Try highest quality first, fall back to hq
   const variants = [
     `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
     `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
     `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
+    `https://img.youtube.com/vi/${videoId}/default.jpg`,
   ];
+  let lastErr: unknown;
   for (const src of variants) {
     try {
-      const result = await compressImageFromUrl(proxyUrl(src));
-      return result;
-    } catch {
-      // try next
+      return await fetchImageBytes(src);
+    } catch (e) {
+      lastErr = e;
     }
   }
-  throw new Error("Could not fetch YouTube thumbnail");
-}
-
-async function fetchInstagramThumbnail(
-  igUrl: string,
-): Promise<{ bytes: Uint8Array<ArrayBuffer>; previewUrl: string }> {
-  // Fallback: use a proxy on the page's og:image via allorigins
-  const allOriginsUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(igUrl)}`;
-  const resp = await fetch(allOriginsUrl);
-  const html = await resp.text();
-  const match =
-    html.match(
-      /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
-    ) ||
-    html.match(
-      /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
-    );
-  if (match?.[1]) {
-    return compressImageFromUrl(proxyUrl(match[1]));
-  }
-  throw new Error("Could not extract Instagram thumbnail");
+  throw lastErr ?? new Error("Could not fetch YouTube thumbnail");
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -176,12 +153,6 @@ async function fetchInstagramThumbnail(
 interface VideoSubmitModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}
-
-function detectPlatform(url: string): string {
-  if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
-  if (url.includes("instagram.com")) return "instagram";
-  return "other";
 }
 
 function PlatformIcon({ platform }: { platform: string }) {
@@ -201,41 +172,82 @@ export function VideoSubmitModal({
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [viewCount, setViewCount] = useState("0");
+
+  // thumbnailBytes = compressed bytes ready for upload
+  // thumbnailPreview = object URL or data URL for <img> display
   const [thumbnailBytes, setThumbnailBytes] =
     useState<Uint8Array<ArrayBuffer> | null>(null);
   const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isFetchingThumb, setIsFetchingThumb] = useState(false);
+  const [isProcessingFile, setIsProcessingFile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Track preview blob URLs so we can revoke them
+  const previewBlobRef = useRef<string | null>(null);
 
   const submitVideo = useSubmitVideo();
   const platform = detectPlatform(url);
 
-  // ── auto-fetch thumbnail when URL is pasted ──────────────────────────────
-  const autoFetchThumbnail = useCallback(async (rawUrl: string) => {
-    const p = detectPlatform(rawUrl);
-    if (p === "other" || !rawUrl.trim()) return;
-
-    setIsFetchingThumb(true);
-    try {
-      let result: { bytes: Uint8Array<ArrayBuffer>; previewUrl: string };
-      if (p === "youtube") {
-        const id = getYouTubeId(rawUrl);
-        if (!id) throw new Error("Invalid YouTube URL");
-        result = await fetchYouTubeThumbnail(id);
-      } else {
-        result = await fetchInstagramThumbnail(rawUrl);
-      }
-      setThumbnailBytes(result.bytes);
-      setThumbnailPreview(result.previewUrl);
-      toast.success("Thumbnail auto-fetched!");
-    } catch {
-      // Silent — user can upload manually
-      toast.info("Could not auto-fetch thumbnail. Please upload one manually.");
-    } finally {
-      setIsFetchingThumb(false);
+  const clearPreviewBlob = useCallback(() => {
+    if (previewBlobRef.current?.startsWith("blob:")) {
+      URL.revokeObjectURL(previewBlobRef.current);
     }
+    previewBlobRef.current = null;
   }, []);
+
+  // ── auto-fetch thumbnail ─────────────────────────────────────────────────
+  const autoFetchThumbnail = useCallback(
+    async (rawUrl: string) => {
+      const p = detectPlatform(rawUrl);
+      if (p === "other" || !rawUrl.trim()) return;
+
+      setIsFetchingThumb(true);
+      setThumbnailBytes(null);
+      clearPreviewBlob();
+      setThumbnailPreview(null);
+
+      try {
+        let result: { bytes: Uint8Array<ArrayBuffer>; previewUrl: string };
+        if (p === "youtube") {
+          const id = getYouTubeId(rawUrl);
+          if (!id) throw new Error("Invalid YouTube URL");
+          result = await fetchYouTubeThumbnail(id);
+        } else {
+          // Instagram: fetch the page HTML and extract og:image
+          const pageResp = await fetch(
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`,
+            { signal: AbortSignal.timeout(10000) },
+          );
+          if (!pageResp.ok) throw new Error("Could not fetch Instagram page");
+          const html = await pageResp.text();
+          const ogMatch =
+            html.match(
+              /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+            ) ||
+            html.match(
+              /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
+            );
+          if (!ogMatch?.[1]) throw new Error("No og:image found");
+          result = await fetchImageBytes(ogMatch[1]);
+        }
+
+        clearPreviewBlob();
+        previewBlobRef.current = result.previewUrl;
+        setThumbnailBytes(result.bytes);
+        setThumbnailPreview(result.previewUrl);
+        toast.success("Thumbnail fetched!");
+      } catch {
+        setThumbnailBytes(null);
+        setThumbnailPreview(null);
+        toast.info(
+          "Could not auto-fetch thumbnail. Please upload one manually.",
+        );
+      } finally {
+        setIsFetchingThumb(false);
+      }
+    },
+    [clearPreviewBlob],
+  );
 
   const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -243,13 +255,13 @@ export function VideoSubmitModal({
   };
 
   const handleUrlBlur = () => {
-    if (url.trim() && !thumbnailBytes) {
+    if (url.trim() && detectPlatform(url.trim()) !== "other") {
       void autoFetchThumbnail(url.trim());
     }
   };
 
   const handleRefetchThumbnail = () => {
-    if (url.trim()) {
+    if (url.trim() && !isFetchingThumb) {
       void autoFetchThumbnail(url.trim());
     }
   };
@@ -258,31 +270,42 @@ export function VideoSubmitModal({
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
 
     if (file.size > 10 * 1024 * 1024) {
       toast.error("Image too large. Please use an image under 10MB.");
       return;
     }
 
-    const previewUrl = URL.createObjectURL(file);
-    setThumbnailPreview(previewUrl);
+    setIsProcessingFile(true);
+    setThumbnailBytes(null);
+    clearPreviewBlob();
 
-    if (file.size < 200 * 1024) {
-      const buffer = (await file.arrayBuffer()) as ArrayBuffer;
-      setThumbnailBytes(new Uint8Array(buffer));
-    } else {
+    // Show preview immediately
+    const blobUrl = URL.createObjectURL(file);
+    previewBlobRef.current = blobUrl;
+    setThumbnailPreview(blobUrl);
+
+    try {
+      const bytes = await blobToCompressedBytes(file);
+      setThumbnailBytes(bytes);
+    } catch {
+      // fallback: use raw bytes without compression
       try {
-        const compressed = await compressImage(file);
-        setThumbnailBytes(compressed);
+        const buffer = await file.arrayBuffer();
+        setThumbnailBytes(new Uint8Array(buffer) as Uint8Array<ArrayBuffer>);
       } catch {
-        const buffer = (await file.arrayBuffer()) as ArrayBuffer;
-        setThumbnailBytes(new Uint8Array(buffer));
+        toast.error("Failed to process image. Please try another file.");
+        clearPreviewBlob();
+        setThumbnailPreview(null);
       }
+    } finally {
+      setIsProcessingFile(false);
     }
   };
 
   // ── submit ───────────────────────────────────────────────────────────────
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim()) {
       toast.error("Please enter a video URL");
@@ -297,49 +320,67 @@ export function VideoSubmitModal({
       return;
     }
 
-    submitVideo.mutate(
-      {
-        title: title.trim(),
-        url: url.trim(),
-        platform,
-        thumbnailBytes,
-        viewCount: BigInt(Math.max(0, Number.parseInt(viewCount, 10) || 0)),
-        onProgress: setUploadProgress,
-      },
-      {
-        onSuccess: () => {
-          toast.success("Video submitted successfully!");
-          setUrl("");
-          setTitle("");
-          setViewCount("0");
-          setThumbnailBytes(null);
-          setUploadProgress(0);
-          if (thumbnailPreview?.startsWith("blob:"))
-            URL.revokeObjectURL(thumbnailPreview);
-          setThumbnailPreview(null);
-          onOpenChange(false);
-        },
-        onError: (err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          toast.error(msg || "Failed to submit video. Please try again.");
-          console.error(err);
-        },
-      },
-    );
+    try {
+      // Build ExternalBlob directly here so we can catch construction errors
+      let thumbnail = ExternalBlob.fromBytes(thumbnailBytes);
+      thumbnail = thumbnail.withUploadProgress(setUploadProgress);
+
+      await new Promise<void>((resolve, reject) => {
+        submitVideo.mutate(
+          {
+            title: title.trim(),
+            url: url.trim(),
+            platform,
+            thumbnailBytes,
+            viewCount: BigInt(Math.max(0, Number.parseInt(viewCount, 10) || 0)),
+            onProgress: setUploadProgress,
+          },
+          {
+            onSuccess: () => {
+              toast.success(
+                "Submitted for review! Your clip will appear once approved.",
+              );
+              setUrl("");
+              setTitle("");
+              setViewCount("0");
+              setThumbnailBytes(null);
+              setUploadProgress(0);
+              clearPreviewBlob();
+              setThumbnailPreview(null);
+              onOpenChange(false);
+              resolve();
+            },
+            onError: (err) => {
+              const msg = err instanceof Error ? err.message : String(err);
+              toast.error(msg || "Failed to submit video. Please try again.");
+              console.error("Submit error:", err);
+              reject(err);
+            },
+          },
+        );
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      toast.error(msg || "Failed to submit video. Please try again.");
+    }
   };
 
   const handleClose = () => {
-    if (thumbnailPreview?.startsWith("blob:"))
-      URL.revokeObjectURL(thumbnailPreview);
+    clearPreviewBlob();
     onOpenChange(false);
   };
+
+  const isSubmitDisabled =
+    submitVideo.isPending ||
+    isFetchingThumb ||
+    isProcessingFile ||
+    !url.trim() ||
+    !title.trim() ||
+    !thumbnailBytes;
 
   // ── render ───────────────────────────────────────────────────────────────
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogTrigger asChild>
-        <span data-ocid="submit_modal.open_modal_button" className="hidden" />
-      </DialogTrigger>
       <DialogContent
         data-ocid="submit_modal.dialog"
         className="bg-card border-border max-w-md w-full mx-4 p-0 overflow-hidden rounded-sm flex flex-col max-h-[90vh]"
@@ -357,7 +398,8 @@ export function VideoSubmitModal({
             id="submit-dialog-description"
             className="text-xs text-muted-foreground mt-1"
           >
-            Share a viral video with the Daily Brief Global community.
+            Share a viral video. Your submission will be reviewed before it goes
+            live.
           </p>
         </DialogHeader>
 
@@ -483,11 +525,13 @@ export function VideoSubmitModal({
               onClick={() => fileInputRef.current?.click()}
               data-ocid="submit_modal.dropzone"
             >
-              {isFetchingThumb ? (
+              {isFetchingThumb || isProcessingFile ? (
                 <div className="flex flex-col items-center justify-center py-8 gap-2 text-muted-foreground">
                   <Loader2 className="w-6 h-6 animate-spin text-brand-red" />
                   <p className="text-xs font-bold uppercase tracking-wider">
-                    Fetching thumbnail...
+                    {isProcessingFile
+                      ? "Processing image..."
+                      : "Fetching thumbnail..."}
                   </p>
                 </div>
               ) : thumbnailPreview ? (
@@ -528,12 +572,13 @@ export function VideoSubmitModal({
             )}
           </div>
 
-          {/* Actions */}
-          <div className="flex gap-3 pt-2 pb-1 sticky bottom-0 bg-card">
+          {/* Actions — sticky at bottom */}
+          <div className="flex gap-3 pt-2 pb-1 sticky bottom-0 bg-card z-10">
             <Button
               type="button"
               variant="outline"
               onClick={handleClose}
+              data-ocid="submit_modal.cancel_button"
               className="flex-1 border-border font-bold uppercase tracking-wide text-xs h-9"
             >
               Cancel
@@ -541,15 +586,23 @@ export function VideoSubmitModal({
             <Button
               data-ocid="submit_modal.submit_button"
               type="submit"
-              disabled={
-                submitVideo.isPending || !url || !title || !thumbnailBytes
-              }
+              disabled={isSubmitDisabled}
               className="flex-1 bg-brand-red hover:bg-brand-red-light text-white font-bold uppercase tracking-wide text-xs h-9 transition-all duration-200 disabled:opacity-40"
             >
               {submitVideo.isPending ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
                   Submitting...
+                </>
+              ) : isFetchingThumb ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  Fetching...
+                </>
+              ) : isProcessingFile ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  Processing...
                 </>
               ) : (
                 "Submit Video"

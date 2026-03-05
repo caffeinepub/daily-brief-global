@@ -25,15 +25,31 @@ export const Comment = IDL.Record({
   'timestamp' : IDL.Int,
   'videoId' : IDL.Nat,
 });
+export const UserRole = IDL.Variant({
+  'admin' : IDL.Null,
+  'user' : IDL.Null,
+  'guest' : IDL.Null,
+});
+export const VideoStatus = IDL.Variant({
+  'pending' : IDL.Null,
+  'approved' : IDL.Null,
+  'rejected' : IDL.Null,
+});
 export const ExternalBlob = IDL.Vec(IDL.Nat8);
+export const Time = IDL.Int;
 export const Video = IDL.Record({
   'id' : IDL.Nat,
   'url' : IDL.Text,
+  'status' : VideoStatus,
   'title' : IDL.Text,
   'likeCount' : IDL.Nat,
   'thumbnail' : ExternalBlob,
-  'submittedAt' : IDL.Int,
-  'platform' : IDL.Text,
+  'submittedAt' : Time,
+  'platform' : IDL.Variant({
+    'other' : IDL.Null,
+    'instagram' : IDL.Null,
+    'youtube' : IDL.Null,
+  }),
   'viewCount' : IDL.Nat,
 });
 
@@ -64,14 +80,31 @@ export const idlService = IDL.Service({
       [],
     ),
   '_caffeineStorageUpdateGatewayPrincipals' : IDL.Func([], [], []),
+  '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
   'addComment' : IDL.Func([IDL.Nat, IDL.Text], [IDL.Opt(Comment)], []),
+  'approveVideo' : IDL.Func([IDL.Nat], [], []),
+  'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+  'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
   'getComments' : IDL.Func([IDL.Nat], [IDL.Vec(Comment)], ['query']),
   'getFeaturedVideo' : IDL.Func([], [IDL.Opt(Video)], ['query']),
+  'getPendingVideos' : IDL.Func([], [IDL.Vec(Video)], ['query']),
   'getVideos' : IDL.Func([], [IDL.Vec(Video)], ['query']),
   'incrementViewCount' : IDL.Func([IDL.Nat], [IDL.Opt(Video)], []),
+  'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
   'likeVideo' : IDL.Func([IDL.Nat], [IDL.Opt(Video)], []),
+  'rejectVideo' : IDL.Func([IDL.Nat], [], []),
   'submitVideo' : IDL.Func(
-      [IDL.Text, IDL.Text, IDL.Text, ExternalBlob, IDL.Nat],
+      [
+        IDL.Text,
+        IDL.Text,
+        IDL.Variant({
+          'other' : IDL.Null,
+          'instagram' : IDL.Null,
+          'youtube' : IDL.Null,
+        }),
+        ExternalBlob,
+        IDL.Nat,
+      ],
       [Video],
       [],
     ),
@@ -97,15 +130,31 @@ export const idlFactory = ({ IDL }) => {
     'timestamp' : IDL.Int,
     'videoId' : IDL.Nat,
   });
+  const UserRole = IDL.Variant({
+    'admin' : IDL.Null,
+    'user' : IDL.Null,
+    'guest' : IDL.Null,
+  });
+  const VideoStatus = IDL.Variant({
+    'pending' : IDL.Null,
+    'approved' : IDL.Null,
+    'rejected' : IDL.Null,
+  });
   const ExternalBlob = IDL.Vec(IDL.Nat8);
+  const Time = IDL.Int;
   const Video = IDL.Record({
     'id' : IDL.Nat,
     'url' : IDL.Text,
+    'status' : VideoStatus,
     'title' : IDL.Text,
     'likeCount' : IDL.Nat,
     'thumbnail' : ExternalBlob,
-    'submittedAt' : IDL.Int,
-    'platform' : IDL.Text,
+    'submittedAt' : Time,
+    'platform' : IDL.Variant({
+      'other' : IDL.Null,
+      'instagram' : IDL.Null,
+      'youtube' : IDL.Null,
+    }),
     'viewCount' : IDL.Nat,
   });
   
@@ -136,14 +185,31 @@ export const idlFactory = ({ IDL }) => {
         [],
       ),
     '_caffeineStorageUpdateGatewayPrincipals' : IDL.Func([], [], []),
+    '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
     'addComment' : IDL.Func([IDL.Nat, IDL.Text], [IDL.Opt(Comment)], []),
+    'approveVideo' : IDL.Func([IDL.Nat], [], []),
+    'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
+    'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
     'getComments' : IDL.Func([IDL.Nat], [IDL.Vec(Comment)], ['query']),
     'getFeaturedVideo' : IDL.Func([], [IDL.Opt(Video)], ['query']),
+    'getPendingVideos' : IDL.Func([], [IDL.Vec(Video)], ['query']),
     'getVideos' : IDL.Func([], [IDL.Vec(Video)], ['query']),
     'incrementViewCount' : IDL.Func([IDL.Nat], [IDL.Opt(Video)], []),
+    'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
     'likeVideo' : IDL.Func([IDL.Nat], [IDL.Opt(Video)], []),
+    'rejectVideo' : IDL.Func([IDL.Nat], [], []),
     'submitVideo' : IDL.Func(
-        [IDL.Text, IDL.Text, IDL.Text, ExternalBlob, IDL.Nat],
+        [
+          IDL.Text,
+          IDL.Text,
+          IDL.Variant({
+            'other' : IDL.Null,
+            'instagram' : IDL.Null,
+            'youtube' : IDL.Null,
+          }),
+          ExternalBlob,
+          IDL.Nat,
+        ],
         [Video],
         [],
       ),

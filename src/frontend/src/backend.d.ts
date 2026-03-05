@@ -17,25 +17,48 @@ export class ExternalBlob {
 export interface Video {
     id: bigint;
     url: string;
+    status: VideoStatus;
     title: string;
     likeCount: bigint;
     thumbnail: ExternalBlob;
-    submittedAt: bigint;
-    platform: string;
+    submittedAt: Time;
+    platform: Variant_other_instagram_youtube;
     viewCount: bigint;
 }
+export type Time = bigint;
 export interface Comment {
     id: bigint;
     text: string;
     timestamp: bigint;
     videoId: bigint;
 }
+export enum UserRole {
+    admin = "admin",
+    user = "user",
+    guest = "guest"
+}
+export enum Variant_other_instagram_youtube {
+    other = "other",
+    instagram = "instagram",
+    youtube = "youtube"
+}
+export enum VideoStatus {
+    pending = "pending",
+    approved = "approved",
+    rejected = "rejected"
+}
 export interface backendInterface {
     addComment(videoId: bigint, text: string): Promise<Comment | null>;
+    approveVideo(id: bigint): Promise<void>;
+    assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
+    getCallerUserRole(): Promise<UserRole>;
     getComments(videoId: bigint): Promise<Array<Comment>>;
     getFeaturedVideo(): Promise<Video | null>;
+    getPendingVideos(): Promise<Array<Video>>;
     getVideos(): Promise<Array<Video>>;
     incrementViewCount(videoId: bigint): Promise<Video | null>;
+    isCallerAdmin(): Promise<boolean>;
     likeVideo(videoId: bigint): Promise<Video | null>;
-    submitVideo(title: string, url: string, platform: string, thumbnail: ExternalBlob, viewCount: bigint): Promise<Video>;
+    rejectVideo(id: bigint): Promise<void>;
+    submitVideo(title: string, url: string, platform: Variant_other_instagram_youtube, thumbnail: ExternalBlob, viewCount: bigint): Promise<Video>;
 }

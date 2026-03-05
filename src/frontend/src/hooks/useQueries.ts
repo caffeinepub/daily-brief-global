@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalBlob } from "../backend";
+import { Variant_other_instagram_youtube } from "../backend.d";
 import type { Comment, Video } from "../backend.d";
 import { useActor } from "./useActor";
 
@@ -204,6 +205,13 @@ export function useIncrementViewCount() {
   });
 }
 
+function toPlatformEnum(platform: string): Variant_other_instagram_youtube {
+  if (platform === "youtube") return Variant_other_instagram_youtube.youtube;
+  if (platform === "instagram")
+    return Variant_other_instagram_youtube.instagram;
+  return Variant_other_instagram_youtube.other;
+}
+
 export function useSubmitVideo() {
   const { actor } = useActor();
   const queryClient = useQueryClient();
@@ -225,7 +233,7 @@ export function useSubmitVideo() {
     }) => {
       if (!actor)
         throw new Error("Backend not available. Please refresh and try again.");
-      // Cast to the expected type for ExternalBlob
+
       const safeBytes = thumbnailBytes as Uint8Array<ArrayBuffer>;
       let thumbnail: ExternalBlob;
       try {
@@ -236,29 +244,79 @@ export function useSubmitVideo() {
       } catch {
         throw new Error("Failed to prepare thumbnail for upload.");
       }
-      try {
-        return await actor.submitVideo(
-          title,
-          url,
-          platform,
-          thumbnail,
-          viewCount,
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (
-          msg.includes("size") ||
-          msg.includes("large") ||
-          msg.includes("limit")
-        ) {
-          throw new Error("Thumbnail too large. Please use a smaller image.");
-        }
-        throw new Error("Video submission failed. Please try again.");
-      }
+
+      return await actor.submitVideo(
+        title,
+        url,
+        toPlatformEnum(platform),
+        thumbnail,
+        viewCount,
+      );
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["videos"] });
       void queryClient.invalidateQueries({ queryKey: ["featured_video"] });
+    },
+    onError: (err) => {
+      console.error("useSubmitVideo error:", err);
+    },
+  });
+}
+
+// ── Admin hooks ───────────────────────────────────────────
+export function useIsAdmin() {
+  const { actor, isFetching } = useActor();
+  return useQuery<boolean>({
+    queryKey: ["is_admin"],
+    queryFn: async () => {
+      if (!actor) return false;
+      return actor.isCallerAdmin();
+    },
+    enabled: !!actor && !isFetching,
+    staleTime: 30_000,
+  });
+}
+
+export function useGetPendingVideos() {
+  const { actor, isFetching } = useActor();
+  return useQuery<UIVideo[]>({
+    queryKey: ["pending_videos"],
+    queryFn: async () => {
+      if (!actor) return [];
+      const videos = await actor.getPendingVideos();
+      return videos.map(toUIVideo);
+    },
+    enabled: !!actor && !isFetching,
+    staleTime: 10_000,
+  });
+}
+
+export function useApproveVideo() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      if (!actor) throw new Error("Not connected");
+      return actor.approveVideo(id);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["pending_videos"] });
+      void queryClient.invalidateQueries({ queryKey: ["videos"] });
+      void queryClient.invalidateQueries({ queryKey: ["featured_video"] });
+    },
+  });
+}
+
+export function useRejectVideo() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: bigint) => {
+      if (!actor) throw new Error("Not connected");
+      return actor.rejectVideo(id);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["pending_videos"] });
     },
   });
 }

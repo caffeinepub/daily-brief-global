@@ -1,34 +1,56 @@
-import Array "mo:core/Array";
 import Int "mo:core/Int";
 import Map "mo:core/Map";
-import Nat "mo:core/Nat";
-import Iter "mo:core/Iter";
 import Order "mo:core/Order";
+import Nat "mo:core/Nat";
+import Array "mo:core/Array";
+import Iter "mo:core/Iter";
 import Time "mo:core/Time";
-import MixinStorage "blob-storage/Mixin";
 import Storage "blob-storage/Storage";
 import Runtime "mo:core/Runtime";
+import MixinAuthorization "authorization/MixinAuthorization";
+import AccessControl "authorization/access-control";
+import MixinStorage "blob-storage/Mixin";
+import Migration "migration";
 
+(with migration = Migration.run)
 actor {
   include MixinStorage();
+
+  let pendingVideos = Map.empty<Nat, Video>();
+  let approvedVideos = Map.empty<Nat, Video>();
+  let rejectedVideos = Map.empty<Nat, Video>();
+  let comments = Map.empty<Nat, Comment>();
+
+  var nextVideoId = 1;
+  var nextCommentId = 1;
+
+  let accessControlState = AccessControl.initState();
+  include MixinAuthorization(accessControlState);
 
   type Video = {
     id : Nat;
     title : Text;
     url : Text;
-    platform : Text; // "youtube" or "instagram"
+    platform : { #youtube; #instagram; #other };
     thumbnail : Storage.ExternalBlob;
     viewCount : Nat;
     likeCount : Nat;
-    submittedAt : Int;
+    submittedAt : Time.Time;
+    status : VideoStatus;
+  };
+  type VideoStatus = { #pending; #approved; #rejected };
+
+  type Comment = {
+    id : Nat;
+    videoId : Nat;
+    text : Text;
+    timestamp : Int;
   };
 
   module Video {
     public func compareByLikesTime(video1 : Video, video2 : Video) : Order.Order {
-      switch (Nat.compare(video1.likeCount, video2.likeCount)) {
-        case (#equal) {
-          Int.compare(video1.submittedAt, video2.submittedAt);
-        };
+      switch (Nat.compare(video2.likeCount, video1.likeCount)) {
+        case (#equal) { Int.compare(video2.submittedAt, video1.submittedAt) };
         case (order) { order };
       };
     };
@@ -38,30 +60,16 @@ actor {
     };
   };
 
-  type Comment = {
-    id : Nat;
-    videoId : Nat;
-    text : Text;
-    timestamp : Int;
-  };
-
   module Comment {
     public func compareTimeDesc(comment1 : Comment, comment2 : Comment) : Order.Order {
       Int.compare(comment2.timestamp, comment1.timestamp);
     };
   };
 
-  // Store videos and comments in maps
-  let videoStore = Map.empty<Nat, Video>();
-  let commentStore = Map.empty<Nat, Comment>();
-
-  var nextVideoId = 1;
-  var nextCommentId = 1;
-
   public shared ({ caller }) func submitVideo(
     title : Text,
     url : Text,
-    platform : Text,
+    platform : { #youtube; #instagram; #other },
     thumbnail : Storage.ExternalBlob,
     viewCount : Nat,
   ) : async Video {
@@ -74,21 +82,54 @@ actor {
       viewCount;
       likeCount = 0;
       submittedAt = Time.now();
+      status = #pending;
     };
-    videoStore.add(nextVideoId, video);
+    pendingVideos.add(nextVideoId, video);
     nextVideoId += 1;
     video;
   };
 
+  public shared ({ caller }) func approveVideo(id : Nat) : async () {
+    if (not (AccessControl.isAdmin(accessControlState, caller))) {
+      Runtime.trap("Unauthorized: Only admin can approve videos");
+    };
+    switch (pendingVideos.get(id)) {
+      case (null) { Runtime.trap("Video not found") };
+      case (?video) {
+        let approvedVideo = { video with status = #approved };
+        approvedVideos.add(id, approvedVideo);
+        pendingVideos.remove(id);
+      };
+    };
+  };
+
+  public shared ({ caller }) func rejectVideo(id : Nat) : async () {
+    if (not (AccessControl.isAdmin(accessControlState, caller))) {
+      Runtime.trap("Unauthorized: Only admin can reject videos");
+    };
+    switch (pendingVideos.get(id)) {
+      case (null) { Runtime.trap("Video not found") };
+      case (?video) {
+        let rejectedVideo = { video with status = #rejected };
+        rejectedVideos.add(id, rejectedVideo);
+        pendingVideos.remove(id);
+      };
+    };
+  };
+
   public query ({ caller }) func getVideos() : async [Video] {
-    let videos = videoStore.values().toArray();
-    videos.sort(
-      Video.compareTimeDesc
-    );
+    approvedVideos.values().toArray().sort(Video.compareTimeDesc);
+  };
+
+  public query ({ caller }) func getPendingVideos() : async [Video] {
+    if (not (AccessControl.isAdmin(accessControlState, caller))) {
+      Runtime.trap("Unauthorized: Only admin can view pending videos");
+    };
+    pendingVideos.values().toArray().sort(Video.compareTimeDesc);
   };
 
   public query ({ caller }) func getFeaturedVideo() : async ?Video {
-    let videos = videoStore.values().toArray();
+    let videos = approvedVideos.values().toArray();
     if (videos.isEmpty()) {
       return null;
     };
@@ -97,21 +138,21 @@ actor {
   };
 
   public shared ({ caller }) func likeVideo(videoId : Nat) : async ?Video {
-    switch (videoStore.get(videoId)) {
-      case (null) { null };
+    switch (approvedVideos.get(videoId)) {
+      case (null) { Runtime.trap("Video not found") };
       case (?video) {
         let updatedVideo = {
           video with
           likeCount = video.likeCount + 1;
         };
-        videoStore.add(videoId, updatedVideo);
+        approvedVideos.add(videoId, updatedVideo);
         ?updatedVideo;
       };
     };
   };
 
   public shared ({ caller }) func addComment(videoId : Nat, text : Text) : async ?Comment {
-    switch (videoStore.get(videoId)) {
+    switch (approvedVideos.get(videoId)) {
       case (null) { Runtime.trap("Video does not exist") };
       case (?_) {
         let comment : Comment = {
@@ -120,7 +161,7 @@ actor {
           text;
           timestamp = Time.now();
         };
-        commentStore.add(nextCommentId, comment);
+        comments.add(nextCommentId, comment);
         nextCommentId += 1;
         ?comment;
       };
@@ -128,24 +169,18 @@ actor {
   };
 
   public query ({ caller }) func getComments(videoId : Nat) : async [Comment] {
-    let commentsIter = commentStore.values().filter(
-      func(comment) { comment.videoId == videoId }
-    );
-    let comments = commentsIter.toArray();
-    comments.sort(
-      Comment.compareTimeDesc
-    );
+    comments.values().filter(func(comment) { comment.videoId == videoId }).toArray().sort(Comment.compareTimeDesc);
   };
 
   public shared ({ caller }) func incrementViewCount(videoId : Nat) : async ?Video {
-    switch (videoStore.get(videoId)) {
+    switch (approvedVideos.get(videoId)) {
       case (null) { null };
       case (?video) {
         let updatedVideo = {
           video with
           viewCount = video.viewCount + 1;
         };
-        videoStore.add(videoId, updatedVideo);
+        approvedVideos.add(videoId, updatedVideo);
         ?updatedVideo;
       };
     };
