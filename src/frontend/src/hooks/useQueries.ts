@@ -4,6 +4,14 @@ import { Variant_other_instagram_youtube } from "../backend.d";
 import type { Comment, Video } from "../backend.d";
 import { useActor } from "./useActor";
 
+import thumbCarChase from "/assets/generated/thumb-car-chase.dim_400x225.jpg";
+import thumbClubBrawl from "/assets/generated/thumb-club-brawl.dim_400x225.jpg";
+import thumbEpicFail from "/assets/generated/thumb-epic-fail.dim_400x225.jpg";
+import thumbRoadRage from "/assets/generated/thumb-road-rage.dim_400x225.jpg";
+import thumbSkate from "/assets/generated/thumb-skate.dim_400x225.jpg";
+// Import mock thumbnails so the build pipeline bundles them correctly
+import thumbStreetFight from "/assets/generated/thumb-street-fight.dim_400x225.jpg";
+
 // ── Mock data for empty state ──────────────────────────────
 export interface MockVideo {
   id: bigint;
@@ -23,7 +31,7 @@ export const MOCK_VIDEOS: MockVideo[] = [
     url: "https://www.instagram.com/p/C0example1/",
     title: "CRAZY Street Fight Caught on Camera",
     likeCount: 4500n,
-    thumbnailUrl: "/assets/generated/thumb-street-fight.dim_400x225.jpg",
+    thumbnailUrl: thumbStreetFight,
     submittedAt: BigInt(Date.now()),
     platform: "instagram",
     viewCount: 1200000n,
@@ -34,7 +42,7 @@ export const MOCK_VIDEOS: MockVideo[] = [
     url: "https://www.instagram.com/p/C0example2/",
     title: "Unbelievable Car Chase Gone Wrong",
     likeCount: 3200n,
-    thumbnailUrl: "/assets/generated/thumb-car-chase.dim_400x225.jpg",
+    thumbnailUrl: thumbCarChase,
     submittedAt: BigInt(Date.now()),
     platform: "instagram",
     viewCount: 890000n,
@@ -45,7 +53,7 @@ export const MOCK_VIDEOS: MockVideo[] = [
     url: "https://www.instagram.com/p/C0example3/",
     title: "Wild Brawl Outside Club",
     likeCount: 2100n,
-    thumbnailUrl: "/assets/generated/thumb-club-brawl.dim_400x225.jpg",
+    thumbnailUrl: thumbClubBrawl,
     submittedAt: BigInt(Date.now()),
     platform: "instagram",
     viewCount: 650000n,
@@ -56,7 +64,7 @@ export const MOCK_VIDEOS: MockVideo[] = [
     url: "https://www.instagram.com/p/C0example4/",
     title: "Insane Skateboard Trick Goes Viral",
     likeCount: 1800n,
-    thumbnailUrl: "/assets/generated/thumb-skate.dim_400x225.jpg",
+    thumbnailUrl: thumbSkate,
     submittedAt: BigInt(Date.now()),
     platform: "instagram",
     viewCount: 420000n,
@@ -67,7 +75,7 @@ export const MOCK_VIDEOS: MockVideo[] = [
     url: "https://www.instagram.com/p/C0example5/",
     title: "Shocking Road Rage Incident",
     likeCount: 980n,
-    thumbnailUrl: "/assets/generated/thumb-road-rage.dim_400x225.jpg",
+    thumbnailUrl: thumbRoadRage,
     submittedAt: BigInt(Date.now()),
     platform: "instagram",
     viewCount: 320000n,
@@ -78,7 +86,7 @@ export const MOCK_VIDEOS: MockVideo[] = [
     url: "https://www.instagram.com/p/C0example6/",
     title: "Epic Fail Compilation 2026",
     likeCount: 750n,
-    thumbnailUrl: "/assets/generated/thumb-epic-fail.dim_400x225.jpg",
+    thumbnailUrl: thumbEpicFail,
     submittedAt: BigInt(Date.now()),
     platform: "instagram",
     viewCount: 200000n,
@@ -317,6 +325,62 @@ export function useRejectVideo() {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["pending_videos"] });
+    },
+  });
+}
+
+// Admin direct publish: submit + approve in one step
+export function usePublishVideo() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      title,
+      url,
+      platform,
+      thumbnailBytes,
+      viewCount,
+      onProgress,
+    }: {
+      title: string;
+      url: string;
+      platform: string;
+      thumbnailBytes: Uint8Array<ArrayBufferLike>;
+      viewCount: bigint;
+      onProgress?: (pct: number) => void;
+    }) => {
+      if (!actor)
+        throw new Error("Backend not available. Please refresh and try again.");
+
+      const safeBytes = thumbnailBytes as Uint8Array<ArrayBuffer>;
+      let thumbnail: ExternalBlob;
+      try {
+        thumbnail = ExternalBlob.fromBytes(safeBytes);
+        if (onProgress) {
+          thumbnail = thumbnail.withUploadProgress(onProgress);
+        }
+      } catch {
+        throw new Error("Failed to prepare thumbnail for upload.");
+      }
+
+      const video = await actor.submitVideo(
+        title,
+        url,
+        toPlatformEnum(platform),
+        thumbnail,
+        viewCount,
+      );
+
+      await actor.approveVideo(video.id);
+      return video;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["videos"] });
+      void queryClient.invalidateQueries({ queryKey: ["featured_video"] });
+      void queryClient.invalidateQueries({ queryKey: ["pending_videos"] });
+    },
+    onError: (err) => {
+      console.error("usePublishVideo error:", err);
     },
   });
 }

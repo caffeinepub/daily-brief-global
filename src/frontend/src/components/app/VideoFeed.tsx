@@ -11,14 +11,15 @@ interface VideoFeedProps {
 
 function VideoCardSkeleton() {
   return (
-    <div className="bg-card border border-border rounded-sm overflow-hidden">
-      <Skeleton className="aspect-video w-full" />
-      <div className="p-3 space-y-2">
+    <div className="flex gap-3 border-b border-border/50 py-4">
+      <Skeleton className="shrink-0 w-[140px] sm:w-[180px] aspect-video rounded-sm" />
+      <div className="flex-1 space-y-2 py-0.5">
+        <Skeleton className="h-3.5 w-20" />
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-4 w-3/4" />
-        <div className="flex gap-3 mt-2">
-          <Skeleton className="h-3 w-16" />
+        <div className="flex gap-3 mt-3">
           <Skeleton className="h-3 w-14" />
+          <Skeleton className="h-3 w-10" />
         </div>
       </div>
     </div>
@@ -28,35 +29,41 @@ function VideoCardSkeleton() {
 export function VideoFeed({ onVideoSelect }: VideoFeedProps) {
   const { data: videos, isLoading } = useVideos();
 
+  // Get today's date label
+  const today = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+
   return (
-    <section className="py-6 px-4" aria-label="Video feed">
-      {/* Section header */}
+    <section className="py-5 px-4" aria-label="Video feed">
+      {/* Section header — WSHH style: "TODAY'S VIDEOS" left, count right */}
       <motion.div
-        className="flex items-center gap-2 mb-4"
+        className="flex items-baseline justify-between mb-1 border-b border-border pb-3"
         initial={{ opacity: 0, x: -10 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ duration: 0.3 }}
       >
-        <div className="w-1 h-5 bg-brand-red rounded-full" />
-        <h2 className="font-display text-sm font-black uppercase tracking-widest text-foreground flex items-center gap-2">
-          <Flame className="w-4 h-4 text-brand-red" />
-          Latest Videos
+        <h2 className="font-display text-lg font-black uppercase tracking-tight text-foreground">
+          TODAY'S <span className="text-brand-red">VIDEOS</span>
         </h2>
-        <div className="flex-1 h-px bg-border ml-2" />
         {videos && (
-          <span className="text-xs text-muted-foreground font-bold">
-            {videos.length} clips
+          <span className="text-xs text-muted-foreground font-bold uppercase tracking-widest">
+            {videos.length} {videos.length === 1 ? "video" : "videos"}
           </span>
         )}
       </motion.div>
 
-      {/* Grid */}
+      {/* Date sub-label */}
+      <p className="text-xs text-muted-foreground/50 font-bold uppercase tracking-widest mb-4">
+        {today}
+      </p>
+
+      {/* List */}
       {isLoading ? (
-        <div
-          data-ocid="video_feed.list"
-          className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3"
-        >
-          {["s1", "s2", "s3", "s4", "s5", "s6"].map((id) => (
+        <div data-ocid="video_feed.list" className="flex flex-col">
+          {["s1", "s2", "s3", "s4"].map((id) => (
             <VideoCardSkeleton key={id} />
           ))}
         </div>
@@ -74,10 +81,7 @@ export function VideoFeed({ onVideoSelect }: VideoFeedProps) {
           </p>
         </div>
       ) : (
-        <div
-          data-ocid="video_feed.list"
-          className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3"
-        >
+        <div data-ocid="video_feed.list" className="flex flex-col">
           {videos.map((video, index) => (
             <VideoCard
               key={String(video.id)}

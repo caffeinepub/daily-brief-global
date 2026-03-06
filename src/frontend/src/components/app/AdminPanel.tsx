@@ -1,3 +1,4 @@
+import { AdminAddVideoModal } from "@/components/app/AdminAddVideoModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,10 +20,12 @@ import {
   Heart,
   Loader2,
   LogIn,
+  PlusCircle,
   ShieldCheck,
   XCircle,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
+import { useState } from "react";
 import { toast } from "sonner";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -296,6 +299,7 @@ export function AdminPanel() {
     isLoading: isPendingLoading,
     isError: isPendingError,
   } = useGetPendingVideos();
+  const [addVideoOpen, setAddVideoOpen] = useState(false);
 
   const handleBackToSite = () => {
     const url = new URL(window.location.href);
@@ -342,6 +346,9 @@ export function AdminPanel() {
         <div className="h-0.5 w-full bg-gradient-to-r from-brand-red via-brand-red-light to-transparent" />
       </header>
 
+      {/* Admin Add Video Modal */}
+      <AdminAddVideoModal open={addVideoOpen} onOpenChange={setAddVideoOpen} />
+
       {/* Main content */}
       <main className="container mx-auto max-w-5xl px-4 py-8">
         {/* Page title */}
@@ -376,19 +383,30 @@ export function AdminPanel() {
         ) : (
           <div data-ocid="admin.panel" className="space-y-4">
             {/* Stats strip */}
-            <div className="flex items-center gap-4 text-xs text-muted-foreground font-bold uppercase tracking-wider mb-6">
-              <span>
-                {isPendingLoading ? (
-                  <Skeleton className="h-3 w-20 inline-block" />
-                ) : (
-                  <>
-                    <span className="text-foreground text-lg font-black mr-1">
-                      {pendingVideos?.length ?? 0}
-                    </span>
-                    pending
-                  </>
-                )}
-              </span>
+            <div className="flex items-center justify-between gap-4 mb-6">
+              <div className="flex items-center gap-4 text-xs text-muted-foreground font-bold uppercase tracking-wider">
+                <span>
+                  {isPendingLoading ? (
+                    <Skeleton className="h-3 w-20 inline-block" />
+                  ) : (
+                    <>
+                      <span className="text-foreground text-lg font-black mr-1">
+                        {pendingVideos?.length ?? 0}
+                      </span>
+                      pending
+                    </>
+                  )}
+                </span>
+              </div>
+              <Button
+                data-ocid="admin.add_video.open_modal_button"
+                size="sm"
+                onClick={() => setAddVideoOpen(true)}
+                className="bg-brand-red hover:bg-brand-red-light text-white font-bold uppercase tracking-wide text-xs h-8 rounded-sm transition-all duration-200 hover:shadow-red-glow-sm"
+              >
+                <PlusCircle className="w-3.5 h-3.5 mr-1.5" />
+                Add Video
+              </Button>
             </div>
 
             {/* Error state */}

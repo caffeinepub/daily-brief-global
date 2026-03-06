@@ -9,6 +9,26 @@ interface HeroSectionProps {
   onVideoSelect: (video: UIVideo) => void;
 }
 
+// Decorative dot pagination — static (WSHH style, 7 dots, first active)
+function HeroDots({
+  total = 7,
+  active = 0,
+}: { total?: number; active?: number }) {
+  return (
+    <div className="flex items-center justify-center gap-1.5 py-2">
+      {Array.from({ length: total }, (_, i) => (
+        <span
+          // biome-ignore lint/suspicious/noArrayIndexKey: decorative dots with stable order
+          key={i}
+          className={`rounded-full transition-all duration-200 ${
+            i === active ? "w-2.5 h-2.5 bg-white" : "w-2 h-2 bg-white/30"
+          }`}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function HeroSection({ onVideoSelect }: HeroSectionProps) {
   const { data: featured, isLoading } = useFeaturedVideo();
 
@@ -20,6 +40,9 @@ export function HeroSection({ onVideoSelect }: HeroSectionProps) {
         aria-label="Featured video"
       >
         <Skeleton className="w-full aspect-[16/7] md:aspect-[21/9]" />
+        <div className="bg-[oklch(0.08_0_0)] py-1">
+          <HeroDots />
+        </div>
       </section>
     );
   }
@@ -42,72 +65,76 @@ export function HeroSection({ onVideoSelect }: HeroSectionProps) {
   }
 
   return (
-    <button
-      type="button"
-      data-ocid="hero.section"
-      className="relative w-full cursor-pointer group overflow-hidden border-b border-border block text-left"
-      onClick={() => onVideoSelect(featured)}
-      aria-label={`Featured: ${featured.title}`}
-    >
-      {/* Featured label */}
-      <div className="absolute top-3 left-3 z-10">
-        <span className="bg-brand-red text-white text-xs font-black uppercase tracking-wider px-2 py-1 rounded-sm">
-          ▶ Featured
-        </span>
-      </div>
+    <section data-ocid="hero.section" className="w-full border-b border-border">
+      <button
+        type="button"
+        className="relative w-full cursor-pointer group overflow-hidden block text-left"
+        onClick={() => onVideoSelect(featured)}
+        aria-label={`Featured: ${featured.title}`}
+      >
+        {/* Thumbnail */}
+        <div className="relative w-full aspect-[16/7] md:aspect-[21/9] overflow-hidden">
+          <img
+            src={featured.thumbnailUrl}
+            alt={featured.title}
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+            loading="eager"
+          />
+          {/* Gradient overlays */}
+          <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.05_0_0)] via-[oklch(0.05_0_0/0.25)] to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-r from-[oklch(0.05_0_0/0.55)] to-transparent" />
 
-      {/* Thumbnail */}
-      <div className="relative w-full aspect-[16/7] md:aspect-[21/9] overflow-hidden">
-        <img
-          src={featured.thumbnailUrl}
-          alt={featured.title}
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-          loading="eager"
-        />
-        {/* Dark gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.05_0_0)] via-[oklch(0.05_0_0/0.3)] to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[oklch(0.05_0_0/0.6)] to-transparent" />
-
-        {/* Play button overlay */}
-        <motion.div
-          className="absolute inset-0 flex items-center justify-center"
-          whileHover={{ scale: 1.05 }}
-        >
-          <div className="w-16 h-16 rounded-full bg-brand-red/90 flex items-center justify-center shadow-red-glow opacity-0 group-hover:opacity-100 transition-all duration-300">
-            <Play className="w-7 h-7 text-white fill-white ml-1" />
-          </div>
-        </motion.div>
-
-        {/* Title + stats overlay */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 md:p-6">
-          <motion.h2
-            className="font-display text-xl md:text-3xl lg:text-4xl font-black text-white uppercase tracking-tight leading-tight mb-2 drop-shadow-lg"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
+          {/* Play button overlay */}
+          <motion.div
+            className="absolute inset-0 flex items-center justify-center"
+            whileHover={{ scale: 1.04 }}
           >
-            {featured.title}
-          </motion.h2>
+            <div className="w-16 h-16 rounded-full bg-brand-red/90 flex items-center justify-center shadow-red-glow opacity-0 group-hover:opacity-100 transition-all duration-300">
+              <Play className="w-7 h-7 text-white fill-white ml-1" />
+            </div>
+          </motion.div>
 
-          <div className="flex items-center gap-4 text-white/80 text-sm">
-            <span className="flex items-center gap-1.5">
-              <Eye className="w-4 h-4" />
-              <span className="font-bold">
-                {formatCount(featured.viewCount)}
-              </span>
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Heart className="w-4 h-4 text-brand-red" />
-              <span className="font-bold">
-                {formatCount(featured.likeCount)}
-              </span>
-            </span>
-            <span className="text-xs uppercase tracking-widest text-white/50 font-bold">
+          {/* Author / source row (top-left) — mimics WSHH user + time */}
+          <div className="absolute top-3 left-3 flex items-center gap-2">
+            <span className="bg-black/60 text-white/80 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-sm flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-red inline-block" />
               {featured.platform}
             </span>
           </div>
+
+          {/* Title + stats overlay — bottom */}
+          <div className="absolute bottom-0 left-0 right-0 p-4 md:p-6">
+            <motion.h2
+              className="font-display text-xl md:text-3xl lg:text-4xl font-black text-white uppercase tracking-tight leading-tight mb-2 drop-shadow-lg"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+            >
+              {featured.title}
+            </motion.h2>
+
+            <div className="flex items-center gap-4 text-white/80 text-sm">
+              <span className="flex items-center gap-1.5">
+                <Eye className="w-4 h-4" />
+                <span className="font-bold">
+                  {formatCount(featured.viewCount)}
+                </span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <Heart className="w-4 h-4 text-brand-red" />
+                <span className="font-bold">
+                  {formatCount(featured.likeCount)}
+                </span>
+              </span>
+            </div>
+          </div>
         </div>
+      </button>
+
+      {/* Dot pagination — decorative, WSHH style */}
+      <div className="bg-[oklch(0.08_0_0)]">
+        <HeroDots total={7} active={0} />
       </div>
-    </button>
+    </section>
   );
 }
