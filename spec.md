@@ -1,38 +1,21 @@
 # Daily Brief Global
 
 ## Current State
-
-- Visitors can submit videos (URL, title, view count, thumbnail) via a modal form.
-- `submitVideo` on the backend immediately stores videos as live/published.
-- `getVideos` and `getFeaturedVideo` return all stored videos regardless of any status.
-- There is no admin concept, no role-based access, and no moderation workflow.
-- The `Video` type has no `status` or `approved` field.
-- Frontend uses `useSubmitVideo` mutation that calls `actor.submitVideo(...)` directly.
+Full viral media website with video submission, admin moderation queue, Instagram embedding, and Internet Identity login. The admin panel is accessed via `?admin=1`. The backend uses `_initializeAccessControlWithSecret` which only grants admin when `adminAssigned = false`. Once admin is claimed by any Internet Identity principal, all other principals are permanently blocked from claiming admin even with the correct token.
 
 ## Requested Changes (Diff)
 
 ### Add
-- `status` field to `Video` type: `"pending"` | `"approved"` | `"rejected"`.
-- `submitVideo` sets `status = "pending"` — video is NOT visible in the public feed.
-- Admin-only backend functions: `getPendingVideos`, `approveVideo`, `rejectVideo`, with caller-based admin guard.
-- A hardcoded admin principal stored in the backend (set to the deployer's principal on first call, or a fixed principal).
-- Admin dashboard page/panel in the frontend (accessible via a hidden route or secret header button) showing pending videos with Approve / Reject actions.
-- Toast/confirmation feedback for admin actions.
-- Visitor submit form: after submission shows a "Your video has been submitted for review" success message instead of immediately appearing in the feed.
+- New backend function `claimAdminWithToken(token: Text)` that: (1) validates the provided token matches `CAFFEINE_ADMIN_TOKEN`, (2) removes admin role from any existing admin principal, (3) assigns admin to the caller — works regardless of whether admin was previously assigned. This allows the real admin to reclaim access from any Internet Identity.
 
 ### Modify
-- `getVideos` — filter to only return videos where `status == "approved"`.
-- `getFeaturedVideo` — filter to only return approved videos.
-- `VideoSubmitModal` success message: change from "Video submitted successfully!" to "Submitted for review! Your clip will appear once approved."
-- Backend `submitVideo` — set `status = "pending"` on new submissions.
+- Frontend `useInitializeAdmin` hook to call `claimAdminWithToken` instead of (or in addition to) `_initializeAccessControlWithSecret`
+- `NotAdminGate` component auto-claim logic to use the new function so any logged-in user with the correct token automatically becomes admin
 
 ### Remove
-- Nothing removed from public API surface.
+- Nothing removed
 
 ## Implementation Plan
-
-1. **Backend**: Add `status` variant type to `Video`. Update `submitVideo` to set `status = #pending`. Update `getVideos` and `getFeaturedVideo` to filter `#approved` only. Add `getPendingVideos`, `approveVideo`, `rejectVideo` functions with admin principal guard. Admin principal is set to the first caller of `setAdmin` or hardcoded as the canister deployer.
-2. **Frontend hooks**: Add `useGetPendingVideos`, `useApproveVideo`, `useRejectVideo` mutations in `useQueries.ts`.
-3. **Frontend Admin Panel**: Create `AdminPanel.tsx` component — shows a list of pending videos with thumbnail, title, URL, and Approve/Reject buttons. Accessible by clicking the site logo 5 times or via `?admin=1` query param.
-4. **Frontend Submit Modal**: Update success toast message to indicate pending review.
-5. **App.tsx**: Wire AdminPanel into the app (hidden access via query param `?admin=1`).
+1. Regenerate backend with new `claimAdminWithToken` public shared function
+2. Update `useInitializeAdmin` hook in `useQueries.ts` to call `claimAdminWithToken`
+3. Update `AdminPanel.tsx` auto-claim effect to use the updated hook

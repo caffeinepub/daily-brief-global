@@ -278,7 +278,7 @@ export function useInitializeAdmin() {
   return useMutation({
     mutationFn: async (secret: string) => {
       if (!actor) throw new Error("Not connected");
-      await actor._initializeAccessControlWithSecret(secret);
+      await actor.claimAdminWithToken(secret);
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["is_admin"] });

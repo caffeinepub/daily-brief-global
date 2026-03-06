@@ -10,9 +10,12 @@ import Runtime "mo:core/Runtime";
 import MixinAuthorization "authorization/MixinAuthorization";
 import AccessControl "authorization/access-control";
 import MixinStorage "blob-storage/Mixin";
+import Principal "mo:core/Principal";
+import Text "mo:core/Text";
+import Migration "migration";
 
-
-
+// Apply migration on upgrade
+(with migration = Migration.run)
 actor {
   include MixinStorage();
 
@@ -184,5 +187,13 @@ actor {
         ?updatedVideo;
       };
     };
+  };
+
+  public shared ({ caller }) func claimAdminWithToken(_userSecret : Text) : async () {
+    // Check if caller is anonymous - reject anonymous callers
+    if (caller.isAnonymous()) {
+      return;
+    };
+    Runtime.trap("Not supported yet");
   };
 };

@@ -144,6 +144,7 @@ export interface backendInterface {
     addComment(videoId: bigint, text: string): Promise<Comment | null>;
     approveVideo(id: bigint): Promise<void>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
+    claimAdminWithToken(_userSecret: string): Promise<void>;
     getCallerUserRole(): Promise<UserRole>;
     getComments(videoId: bigint): Promise<Array<Comment>>;
     getFeaturedVideo(): Promise<Video | null>;
@@ -295,6 +296,20 @@ export class Backend implements backendInterface {
             }
         } else {
             const result = await this.actor.assignCallerUserRole(arg0, to_candid_UserRole_n9(this._uploadFile, this._downloadFile, arg1));
+            return result;
+        }
+    }
+    async claimAdminWithToken(arg0: string): Promise<void> {
+        if (this.processError) {
+            try {
+                const result = await this.actor.claimAdminWithToken(arg0);
+                return result;
+            } catch (e) {
+                this.processError(e);
+                throw new Error("unreachable");
+            }
+        } else {
+            const result = await this.actor.claimAdminWithToken(arg0);
             return result;
         }
     }

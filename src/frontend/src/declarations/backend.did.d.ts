@@ -68,6 +68,7 @@ export interface _SERVICE {
   'addComment' : ActorMethod<[bigint, string], [] | [Comment]>,
   'approveVideo' : ActorMethod<[bigint], undefined>,
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
+  'claimAdminWithToken' : ActorMethod<[string], undefined>,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
   'getComments' : ActorMethod<[bigint], Array<Comment>>,
   'getFeaturedVideo' : ActorMethod<[], [] | [Video]>,

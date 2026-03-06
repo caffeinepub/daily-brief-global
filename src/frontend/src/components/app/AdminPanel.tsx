@@ -1,7 +1,6 @@
 import { AdminAddVideoModal } from "@/components/app/AdminAddVideoModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useInternetIdentity } from "@/hooks/useInternetIdentity";
 import {
@@ -28,7 +27,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -240,42 +239,52 @@ function NotAdminGate() {
   const { login, isLoggingIn, identity } = useInternetIdentity();
   const initializeAdmin = useInitializeAdmin();
   const queryClient = useQueryClient();
-  const [token, setToken] = useState("3049_ash");
-  const [tokenError, setTokenError] = useState("");
-  const autoClaimedRef = useRef(false);
+  const [isAutoClaimPending, setIsAutoClaimPending] = useState(false);
+  const [claimError, setClaimError] = useState("");
 
-  // Auto-claim admin access when identity is available
+  // Auto-claim admin access whenever identity becomes available
   useEffect(() => {
-    if (identity && !autoClaimedRef.current && !initializeAdmin.isPending) {
-      autoClaimedRef.current = true;
-      void (async () => {
-        try {
-          await initializeAdmin.mutateAsync("3049_ash");
-          await queryClient.invalidateQueries({ queryKey: ["is_admin"] });
-        } catch {
-          // Token may already be claimed — ignore silently
-        }
-      })();
-    }
-  }, [identity, initializeAdmin, queryClient]);
+    if (!identity) return;
 
-  const handleClaim = async () => {
-    setTokenError("");
-    if (!token.trim()) {
-      setTokenError("Please enter the admin token.");
-      return;
-    }
-    try {
-      await initializeAdmin.mutateAsync(token.trim());
-      // force re-check of admin status
-      await queryClient.invalidateQueries({ queryKey: ["is_admin"] });
-    } catch (err) {
-      const msg =
-        err instanceof Error
-          ? err.message
-          : "Invalid token or already claimed.";
-      setTokenError(msg);
-    }
+    setClaimError("");
+    setIsAutoClaimPending(true);
+
+    void (async () => {
+      try {
+        await initializeAdmin.mutateAsync("3049_ash");
+        await queryClient.invalidateQueries({ queryKey: ["is_admin"] });
+      } catch (err) {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : "Could not verify admin access. Please try logging in again.";
+        setClaimError(msg);
+      } finally {
+        setIsAutoClaimPending(false);
+      }
+    })();
+    // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally run only when identity changes
+  }, [identity, initializeAdmin.mutateAsync, queryClient.invalidateQueries]);
+
+  const handleRetry = () => {
+    if (!identity) return;
+    setClaimError("");
+    setIsAutoClaimPending(true);
+
+    void (async () => {
+      try {
+        await initializeAdmin.mutateAsync("3049_ash");
+        await queryClient.invalidateQueries({ queryKey: ["is_admin"] });
+      } catch (err) {
+        const msg =
+          err instanceof Error
+            ? err.message
+            : "Could not verify admin access. Please try logging in again.";
+        setClaimError(msg);
+      } finally {
+        setIsAutoClaimPending(false);
+      }
+    })();
   };
 
   return (
@@ -294,86 +303,72 @@ function NotAdminGate() {
           <ShieldCheck className="w-8 h-8 text-brand-red" />
         </div>
 
-        {/* Copy */}
-        <div className="space-y-2">
-          <h2 className="font-display font-black text-xl uppercase tracking-wider text-foreground">
-            Admin Access Required
-          </h2>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            {identity
-              ? "Enter your admin token to claim access, or log in with a different Internet Identity."
-              : "Connect with Internet Identity to access the admin panel."}
-          </p>
-        </div>
-
-        {/* Login button — only shown when not logged in */}
+        {/* Not logged in — show login button */}
         {!identity && (
-          <Button
-            data-ocid="admin.login.primary_button"
-            onClick={login}
-            disabled={isLoggingIn}
-            className="w-full bg-brand-red hover:bg-brand-red-light text-white font-bold uppercase tracking-wide text-xs px-6 h-10 rounded-sm transition-all duration-200 hover:shadow-red-glow-sm disabled:opacity-50"
-          >
-            {isLoggingIn ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
-                Connecting...
-              </>
-            ) : (
-              <>
-                <LogIn className="w-3.5 h-3.5 mr-2" />
-                Connect with Internet Identity
-              </>
-            )}
-          </Button>
-        )}
-
-        {/* Admin token claim — shown when logged in but not admin */}
-        {identity && (
-          <div className="w-full space-y-3 text-left">
-            <label
-              htmlFor="admin-token-input"
-              className="text-xs font-bold uppercase tracking-wider text-muted-foreground"
-            >
-              Admin Token
-            </label>
-            <Input
-              id="admin-token-input"
-              data-ocid="admin.token.input"
-              type="password"
-              placeholder="Enter your admin token..."
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void handleClaim();
-              }}
-              className="bg-card border-border text-foreground placeholder:text-muted-foreground/50 rounded-sm h-10 text-sm"
-            />
-            {tokenError && (
-              <p
-                data-ocid="admin.token.error_state"
-                className="text-xs text-red-400"
-              >
-                {tokenError}
+          <>
+            <div className="space-y-2">
+              <h2 className="font-display font-black text-xl uppercase tracking-wider text-foreground">
+                Admin Access Required
+              </h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Connect with Internet Identity to access the admin panel.
               </p>
-            )}
+            </div>
             <Button
-              data-ocid="admin.token.submit_button"
-              onClick={() => void handleClaim()}
-              disabled={initializeAdmin.isPending}
-              className="w-full bg-brand-red hover:bg-brand-red-light text-white font-bold uppercase tracking-wide text-xs h-10 rounded-sm transition-all duration-200 hover:shadow-red-glow-sm disabled:opacity-50"
+              data-ocid="admin.login.primary_button"
+              onClick={login}
+              disabled={isLoggingIn}
+              className="w-full bg-brand-red hover:bg-brand-red-light text-white font-bold uppercase tracking-wide text-xs px-6 h-10 rounded-sm transition-all duration-200 hover:shadow-red-glow-sm disabled:opacity-50"
             >
-              {initializeAdmin.isPending ? (
+              {isLoggingIn ? (
                 <>
                   <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
-                  Verifying...
+                  Connecting...
                 </>
               ) : (
                 <>
-                  <ShieldCheck className="w-3.5 h-3.5 mr-2" />
-                  Claim Admin Access
+                  <LogIn className="w-3.5 h-3.5 mr-2" />
+                  Connect with Internet Identity
                 </>
               )}
+            </Button>
+          </>
+        )}
+
+        {/* Logged in and auto-claim in progress */}
+        {identity && isAutoClaimPending && (
+          <div
+            data-ocid="admin.claim.loading_state"
+            className="flex flex-col items-center gap-3"
+          >
+            <Loader2 className="w-6 h-6 animate-spin text-brand-red" />
+            <p className="text-sm text-muted-foreground">
+              Verifying admin access...
+            </p>
+          </div>
+        )}
+
+        {/* Logged in, auto-claim failed */}
+        {identity && !isAutoClaimPending && claimError && (
+          <div
+            data-ocid="admin.claim.error_state"
+            className="flex flex-col items-center gap-4 w-full"
+          >
+            <div className="space-y-2">
+              <h2 className="font-display font-black text-xl uppercase tracking-wider text-foreground">
+                Access Denied
+              </h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Could not verify admin access. Please try logging in again.
+              </p>
+            </div>
+            <Button
+              data-ocid="admin.claim.primary_button"
+              onClick={handleRetry}
+              className="w-full bg-brand-red hover:bg-brand-red-light text-white font-bold uppercase tracking-wide text-xs px-6 h-10 rounded-sm transition-all duration-200 hover:shadow-red-glow-sm"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 mr-2" />
+              Try Again
             </Button>
           </div>
         )}
