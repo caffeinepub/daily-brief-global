@@ -272,6 +272,20 @@ export function useSubmitVideo() {
 }
 
 // ── Admin hooks ───────────────────────────────────────────
+export function useInitializeAdmin() {
+  const { actor } = useActor();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (secret: string) => {
+      if (!actor) throw new Error("Not connected");
+      await actor._initializeAccessControlWithSecret(secret);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["is_admin"] });
+    },
+  });
+}
+
 export function useIsAdmin() {
   const { actor, isFetching } = useActor();
   return useQuery<boolean>({

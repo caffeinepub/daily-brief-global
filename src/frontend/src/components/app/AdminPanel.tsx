@@ -1,16 +1,19 @@
 import { AdminAddVideoModal } from "@/components/app/AdminAddVideoModal";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useInternetIdentity } from "@/hooks/useInternetIdentity";
 import {
   type UIVideo,
   useApproveVideo,
   useGetPendingVideos,
+  useInitializeAdmin,
   useIsAdmin,
 } from "@/hooks/useQueries";
 import { useRejectVideo } from "@/hooks/useQueries";
 import { formatCount } from "@/utils/format";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   ArrowLeft,
@@ -25,7 +28,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -235,6 +238,45 @@ function PendingVideoSkeleton({ index }: { index: number }) {
 
 function NotAdminGate() {
   const { login, isLoggingIn, identity } = useInternetIdentity();
+  const initializeAdmin = useInitializeAdmin();
+  const queryClient = useQueryClient();
+  const [token, setToken] = useState("3049_ash");
+  const [tokenError, setTokenError] = useState("");
+  const autoClaimedRef = useRef(false);
+
+  // Auto-claim admin access when identity is available
+  useEffect(() => {
+    if (identity && !autoClaimedRef.current && !initializeAdmin.isPending) {
+      autoClaimedRef.current = true;
+      void (async () => {
+        try {
+          await initializeAdmin.mutateAsync("3049_ash");
+          await queryClient.invalidateQueries({ queryKey: ["is_admin"] });
+        } catch {
+          // Token may already be claimed — ignore silently
+        }
+      })();
+    }
+  }, [identity, initializeAdmin, queryClient]);
+
+  const handleClaim = async () => {
+    setTokenError("");
+    if (!token.trim()) {
+      setTokenError("Please enter the admin token.");
+      return;
+    }
+    try {
+      await initializeAdmin.mutateAsync(token.trim());
+      // force re-check of admin status
+      await queryClient.invalidateQueries({ queryKey: ["is_admin"] });
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Invalid token or already claimed.";
+      setTokenError(msg);
+    }
+  };
 
   return (
     <div
@@ -245,7 +287,7 @@ function NotAdminGate() {
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.35 }}
-        className="flex flex-col items-center gap-6"
+        className="flex flex-col items-center gap-6 w-full max-w-sm"
       >
         {/* Icon */}
         <div className="w-16 h-16 rounded-full bg-brand-red/10 border border-brand-red/30 flex items-center justify-center">
@@ -253,13 +295,13 @@ function NotAdminGate() {
         </div>
 
         {/* Copy */}
-        <div className="space-y-2 max-w-sm">
+        <div className="space-y-2">
           <h2 className="font-display font-black text-xl uppercase tracking-wider text-foreground">
             Admin Access Required
           </h2>
           <p className="text-sm text-muted-foreground leading-relaxed">
             {identity
-              ? "Your account does not have admin privileges. Contact the site owner to request access."
+              ? "Enter your admin token to claim access, or log in with a different Internet Identity."
               : "Connect with Internet Identity to access the admin panel."}
           </p>
         </div>
@@ -270,7 +312,7 @@ function NotAdminGate() {
             data-ocid="admin.login.primary_button"
             onClick={login}
             disabled={isLoggingIn}
-            className="bg-brand-red hover:bg-brand-red-light text-white font-bold uppercase tracking-wide text-xs px-6 h-10 rounded-sm transition-all duration-200 hover:shadow-red-glow-sm disabled:opacity-50"
+            className="w-full bg-brand-red hover:bg-brand-red-light text-white font-bold uppercase tracking-wide text-xs px-6 h-10 rounded-sm transition-all duration-200 hover:shadow-red-glow-sm disabled:opacity-50"
           >
             {isLoggingIn ? (
               <>
@@ -284,6 +326,56 @@ function NotAdminGate() {
               </>
             )}
           </Button>
+        )}
+
+        {/* Admin token claim — shown when logged in but not admin */}
+        {identity && (
+          <div className="w-full space-y-3 text-left">
+            <label
+              htmlFor="admin-token-input"
+              className="text-xs font-bold uppercase tracking-wider text-muted-foreground"
+            >
+              Admin Token
+            </label>
+            <Input
+              id="admin-token-input"
+              data-ocid="admin.token.input"
+              type="password"
+              placeholder="Enter your admin token..."
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleClaim();
+              }}
+              className="bg-card border-border text-foreground placeholder:text-muted-foreground/50 rounded-sm h-10 text-sm"
+            />
+            {tokenError && (
+              <p
+                data-ocid="admin.token.error_state"
+                className="text-xs text-red-400"
+              >
+                {tokenError}
+              </p>
+            )}
+            <Button
+              data-ocid="admin.token.submit_button"
+              onClick={() => void handleClaim()}
+              disabled={initializeAdmin.isPending}
+              className="w-full bg-brand-red hover:bg-brand-red-light text-white font-bold uppercase tracking-wide text-xs h-10 rounded-sm transition-all duration-200 hover:shadow-red-glow-sm disabled:opacity-50"
+            >
+              {initializeAdmin.isPending ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                  Verifying...
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5 mr-2" />
+                  Claim Admin Access
+                </>
+              )}
+            </Button>
+          </div>
         )}
       </motion.div>
     </div>
