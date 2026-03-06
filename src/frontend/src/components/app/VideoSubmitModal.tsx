@@ -5,147 +5,125 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { useSubmitVideo } from "@/hooks/useQueries";
-import {
-  Instagram,
-  Link,
-  Loader2,
-  RefreshCw,
-  Upload,
-  Youtube,
-} from "lucide-react";
+import { Loader2, Upload, Video } from "lucide-react";
 import { motion } from "motion/react";
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { ExternalBlob } from "../../backend";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/** Extract YouTube video ID from various URL formats */
-function getYouTubeId(url: string): string | null {
-  const patterns = [
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
-  ];
-  for (const p of patterns) {
-    const m = url.match(p);
-    if (m) return m[1];
-  }
-  return null;
-}
-
-function detectPlatform(url: string): string {
-  if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
-  if (url.includes("instagram.com")) return "instagram";
-  return "other";
-}
-
-/** Convert image bytes to a compressed JPEG Uint8Array via canvas */
-async function blobToCompressedBytes(
-  blob: Blob,
+/** Extract a thumbnail frame from an mp4 File using a hidden <video> element. */
+async function extractVideoThumbnail(
+  file: File,
 ): Promise<Uint8Array<ArrayBuffer>> {
   return new Promise((resolve, reject) => {
-    const objectUrl = URL.createObjectURL(blob);
-    const img = new Image();
-    img.onload = () => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+
+    const objectUrl = URL.createObjectURL(file);
+
+    const cleanup = () => {
       URL.revokeObjectURL(objectUrl);
-      const MAX_W = 800;
-      const MAX_H = 450;
-      let w = img.width || MAX_W;
-      let h = img.height || MAX_H;
-      if (w > MAX_W || h > MAX_H) {
-        const ratio = Math.min(MAX_W / w, MAX_H / h);
-        w = Math.round(w * ratio);
-        h = Math.round(h * ratio);
-      }
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        reject(new Error("Canvas not supported"));
-        return;
-      }
-      ctx.drawImage(img, 0, 0, w, h);
-      canvas.toBlob(
-        (outBlob) => {
-          if (!outBlob) {
-            reject(new Error("Compression failed"));
-            return;
-          }
-          outBlob
-            .arrayBuffer()
-            .then((buf) =>
-              resolve(new Uint8Array(buf) as Uint8Array<ArrayBuffer>),
-            )
-            .catch(reject);
-        },
-        "image/jpeg",
-        0.82,
-      );
+      video.src = "";
     };
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error("Failed to load image"));
+
+    const captureFrame = () => {
+      try {
+        const W = 800;
+        const H = 450;
+        const canvas = document.createElement("canvas");
+        canvas.width = W;
+        canvas.height = H;
+        const ctx = canvas.getContext("2d")!;
+
+        // Draw a dark background first
+        ctx.fillStyle = "#111";
+        ctx.fillRect(0, 0, W, H);
+
+        // Draw the video frame, letterboxed
+        const vw = video.videoWidth || W;
+        const vh = video.videoHeight || H;
+        const scale = Math.min(W / vw, H / vh);
+        const dw = vw * scale;
+        const dh = vh * scale;
+        const dx = (W - dw) / 2;
+        const dy = (H - dh) / 2;
+        ctx.drawImage(video, dx, dy, dw, dh);
+
+        canvas.toBlob(
+          (blob) => {
+            cleanup();
+            if (!blob) return reject(new Error("canvas toBlob returned null"));
+            blob
+              .arrayBuffer()
+              .then((buf) =>
+                resolve(new Uint8Array(buf) as Uint8Array<ArrayBuffer>),
+              )
+              .catch(reject);
+          },
+          "image/jpeg",
+          0.85,
+        );
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
     };
-    img.src = objectUrl;
+
+    video.addEventListener("seeked", captureFrame, { once: true });
+
+    video.addEventListener(
+      "loadedmetadata",
+      () => {
+        // Seek to 1s or 10% of duration, whichever is smaller
+        const seekTo = Math.min(1, (video.duration || 0) * 0.1);
+        video.currentTime = seekTo > 0 ? seekTo : 0;
+      },
+      { once: true },
+    );
+
+    video.addEventListener(
+      "error",
+      () => {
+        cleanup();
+        // Fall back to a solid-color placeholder that is large enough for the backend
+        makeFallbackThumb().then(resolve).catch(reject);
+      },
+      { once: true },
+    );
+
+    video.src = objectUrl;
   });
 }
 
-/**
- * Fetch image bytes from a URL.
- * Tries direct fetch first (works when CORS allows it), then falls back
- * to two different proxy services.
- */
-async function fetchImageBytes(
-  directUrl: string,
-): Promise<{ bytes: Uint8Array<ArrayBuffer>; previewUrl: string }> {
-  const proxies = [
-    (u: string) =>
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-  ];
-
-  // Try direct first
-  const urls = [directUrl, ...proxies.map((p) => p(directUrl))];
-
-  let lastErr: unknown;
-  for (const url of urls) {
-    try {
-      const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
-      if (!resp.ok) continue;
-      const blob = await resp.blob();
-      if (!blob.type.startsWith("image/") && blob.size < 100) continue;
-      const bytes = await blobToCompressedBytes(blob);
-      const previewUrl = URL.createObjectURL(blob);
-      return { bytes, previewUrl };
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr ?? new Error("All fetch attempts failed");
-}
-
-async function fetchYouTubeThumbnail(
-  videoId: string,
-): Promise<{ bytes: Uint8Array<ArrayBuffer>; previewUrl: string }> {
-  const variants = [
-    `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-    `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-    `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`,
-    `https://img.youtube.com/vi/${videoId}/default.jpg`,
-  ];
-  let lastErr: unknown;
-  for (const src of variants) {
-    try {
-      return await fetchImageBytes(src);
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr ?? new Error("Could not fetch YouTube thumbnail");
+/** Fallback: a solid dark 800x450 JPEG (never 1x1, so blob-storage accepts it). */
+async function makeFallbackThumb(): Promise<Uint8Array<ArrayBuffer>> {
+  const canvas = document.createElement("canvas");
+  canvas.width = 800;
+  canvas.height = 450;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#111111";
+  ctx.fillRect(0, 0, 800, 450);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) return reject(new Error("no blob"));
+        blob
+          .arrayBuffer()
+          .then((buf) =>
+            resolve(new Uint8Array(buf) as Uint8Array<ArrayBuffer>),
+          )
+          .catch(reject);
+      },
+      "image/jpeg",
+      0.85,
+    );
+  });
 }
 
 // ── types ─────────────────────────────────────────────────────────────────────
@@ -155,198 +133,49 @@ interface VideoSubmitModalProps {
   onOpenChange: (open: boolean) => void;
 }
 
-function PlatformIcon({ platform }: { platform: string }) {
-  if (platform === "youtube")
-    return <Youtube className="w-4 h-4 text-red-500" />;
-  if (platform === "instagram")
-    return <Instagram className="w-4 h-4 text-pink-500" />;
-  return <Link className="w-4 h-4 text-muted-foreground" />;
-}
-
 // ── component ─────────────────────────────────────────────────────────────────
 
 export function VideoSubmitModal({
   open,
   onOpenChange,
 }: VideoSubmitModalProps) {
-  const [url, setUrl] = useState("");
-  const [title, setTitle] = useState("");
-  const [viewCount, setViewCount] = useState("0");
-
-  // thumbnailBytes = compressed bytes ready for upload
-  // thumbnailPreview = object URL or data URL for <img> display
-  const [thumbnailBytes, setThumbnailBytes] =
-    useState<Uint8Array<ArrayBuffer> | null>(null);
-  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isFetchingThumb, setIsFetchingThumb] = useState(false);
-  const [isProcessingFile, setIsProcessingFile] = useState(false);
+  const [mp4File, setMp4File] = useState<File | null>(null);
+  const [description, setDescription] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Track preview blob URLs so we can revoke them
-  const previewBlobRef = useRef<string | null>(null);
-
   const submitVideo = useSubmitVideo();
-  const platform = detectPlatform(url);
-
-  const clearPreviewBlob = useCallback(() => {
-    if (previewBlobRef.current?.startsWith("blob:")) {
-      URL.revokeObjectURL(previewBlobRef.current);
-    }
-    previewBlobRef.current = null;
-  }, []);
-
-  // ── auto-fetch thumbnail ─────────────────────────────────────────────────
-  const autoFetchThumbnail = useCallback(
-    async (rawUrl: string) => {
-      const p = detectPlatform(rawUrl);
-      if (p === "other" || !rawUrl.trim()) return;
-
-      setIsFetchingThumb(true);
-      setThumbnailBytes(null);
-      clearPreviewBlob();
-      setThumbnailPreview(null);
-
-      try {
-        let result: { bytes: Uint8Array<ArrayBuffer>; previewUrl: string };
-        if (p === "youtube") {
-          const id = getYouTubeId(rawUrl);
-          if (!id) throw new Error("Invalid YouTube URL");
-          result = await fetchYouTubeThumbnail(id);
-        } else {
-          // Instagram: fetch the page HTML and extract og:image
-          const pageResp = await fetch(
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(rawUrl)}`,
-            { signal: AbortSignal.timeout(10000) },
-          );
-          if (!pageResp.ok) throw new Error("Could not fetch Instagram page");
-          const html = await pageResp.text();
-          const ogMatch =
-            html.match(
-              /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
-            ) ||
-            html.match(
-              /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
-            );
-          if (!ogMatch?.[1]) throw new Error("No og:image found");
-          result = await fetchImageBytes(ogMatch[1]);
-        }
-
-        clearPreviewBlob();
-        previewBlobRef.current = result.previewUrl;
-        setThumbnailBytes(result.bytes);
-        setThumbnailPreview(result.previewUrl);
-        toast.success("Thumbnail fetched!");
-      } catch {
-        setThumbnailBytes(null);
-        setThumbnailPreview(null);
-        toast.info(
-          "Could not auto-fetch thumbnail. Please upload one manually.",
-        );
-      } finally {
-        setIsFetchingThumb(false);
-      }
-    },
-    [clearPreviewBlob],
-  );
-
-  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setUrl(val);
-  };
-
-  const handleUrlBlur = () => {
-    if (url.trim() && detectPlatform(url.trim()) !== "other") {
-      void autoFetchThumbnail(url.trim());
-    }
-  };
-
-  const handleRefetchThumbnail = () => {
-    if (url.trim() && !isFetchingThumb) {
-      void autoFetchThumbnail(url.trim());
-    }
-  };
-
-  // ── manual file upload ───────────────────────────────────────────────────
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error("Image too large. Please use an image under 10MB.");
-      return;
-    }
-
-    setIsProcessingFile(true);
-    setThumbnailBytes(null);
-    clearPreviewBlob();
-
-    // Show preview immediately
-    const blobUrl = URL.createObjectURL(file);
-    previewBlobRef.current = blobUrl;
-    setThumbnailPreview(blobUrl);
-
-    try {
-      const bytes = await blobToCompressedBytes(file);
-      setThumbnailBytes(bytes);
-    } catch {
-      // fallback: use raw bytes without compression
-      try {
-        const buffer = await file.arrayBuffer();
-        setThumbnailBytes(new Uint8Array(buffer) as Uint8Array<ArrayBuffer>);
-      } catch {
-        toast.error("Failed to process image. Please try another file.");
-        clearPreviewBlob();
-        setThumbnailPreview(null);
-      }
-    } finally {
-      setIsProcessingFile(false);
-    }
-  };
 
   // ── submit ───────────────────────────────────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url.trim()) {
-      toast.error("Please enter a video URL");
+    if (!mp4File) {
+      toast.error("Please select an .mp4 video file");
       return;
     }
-    if (!title.trim()) {
-      toast.error("Please enter a title");
-      return;
-    }
-    if (!thumbnailBytes) {
-      toast.error("Please upload a thumbnail image");
+    if (!description.trim()) {
+      toast.error("Please enter a description");
       return;
     }
 
     try {
-      // Build ExternalBlob directly here so we can catch construction errors
-      let thumbnail = ExternalBlob.fromBytes(thumbnailBytes);
-      thumbnail = thumbnail.withUploadProgress(setUploadProgress);
+      const thumbnailBytes = await extractVideoThumbnail(mp4File);
 
       await new Promise<void>((resolve, reject) => {
         submitVideo.mutate(
           {
-            title: title.trim(),
-            url: url.trim(),
-            platform,
+            title: description.trim().slice(0, 100),
+            url: "",
+            platform: "other",
             thumbnailBytes,
-            viewCount: BigInt(Math.max(0, Number.parseInt(viewCount, 10) || 0)),
-            onProgress: setUploadProgress,
+            viewCount: 0n,
+            onProgress: undefined,
           },
           {
             onSuccess: () => {
               toast.success(
                 "Submitted for review! Your clip will appear once approved.",
               );
-              setUrl("");
-              setTitle("");
-              setViewCount("0");
-              setThumbnailBytes(null);
-              setUploadProgress(0);
-              clearPreviewBlob();
-              setThumbnailPreview(null);
+              setMp4File(null);
+              setDescription("");
               onOpenChange(false);
               resolve();
             },
@@ -366,17 +195,27 @@ export function VideoSubmitModal({
   };
 
   const handleClose = () => {
-    clearPreviewBlob();
     onOpenChange(false);
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    if (
+      !file.name.toLowerCase().endsWith(".mp4") &&
+      file.type !== "video/mp4"
+    ) {
+      toast.error("Only .mp4 files are accepted");
+      return;
+    }
+
+    setMp4File(file);
+  };
+
   const isSubmitDisabled =
-    submitVideo.isPending ||
-    isFetchingThumb ||
-    isProcessingFile ||
-    !url.trim() ||
-    !title.trim() ||
-    !thumbnailBytes;
+    submitVideo.isPending || !mp4File || !description.trim();
 
   // ── render ───────────────────────────────────────────────────────────────
   return (
@@ -398,8 +237,8 @@ export function VideoSubmitModal({
             id="submit-dialog-description"
             className="text-xs text-muted-foreground mt-1"
           >
-            Share a viral video. Your submission will be reviewed before it goes
-            live.
+            Upload an .mp4 clip with a description. Your submission will be
+            reviewed before it goes live.
           </p>
         </DialogHeader>
 
@@ -410,166 +249,73 @@ export function VideoSubmitModal({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2 }}
         >
-          {/* URL */}
+          {/* MP4 File Upload */}
           <div className="space-y-1.5">
             <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              Video URL *
+              Video File (.mp4) *
             </Label>
-            <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2">
-                <PlatformIcon platform={platform} />
-              </div>
-              <Input
-                data-ocid="submit_modal.url_input"
-                type="url"
-                value={url}
-                onChange={handleUrlChange}
-                onBlur={handleUrlBlur}
-                placeholder="https://www.instagram.com/p/..."
-                className="pl-9 bg-secondary border-border text-sm focus-visible:ring-brand-red focus-visible:border-brand-red"
-                required
-              />
-            </div>
-            {platform !== "other" && url && (
-              <p className="text-xs text-muted-foreground">
-                Detected:{" "}
-                <span className="text-brand-red font-bold capitalize">
-                  {platform}
-                </span>
-                {" · "}
-                <span className="opacity-60">
-                  thumbnail will be fetched automatically
-                </span>
-              </p>
-            )}
-          </div>
-
-          {/* Title */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              Title *
-            </Label>
-            <Input
-              data-ocid="submit_modal.title_input"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="INSANE clip caught on camera..."
-              className="bg-secondary border-border text-sm focus-visible:ring-brand-red focus-visible:border-brand-red uppercase"
-              required
-              maxLength={200}
-            />
-          </div>
-
-          {/* View count */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              View Count
-            </Label>
-            <Input
-              data-ocid="submit_modal.views_input"
-              type="number"
-              value={viewCount}
-              onChange={(e) => setViewCount(e.target.value)}
-              placeholder="0"
-              min="0"
-              className="bg-secondary border-border text-sm focus-visible:ring-brand-red focus-visible:border-brand-red"
-            />
-          </div>
-
-          {/* Thumbnail */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                Thumbnail *
-              </Label>
-              <div className="flex items-center gap-2">
-                {platform !== "other" && url && (
-                  <button
-                    type="button"
-                    data-ocid="submit_modal.refetch_button"
-                    onClick={handleRefetchThumbnail}
-                    disabled={isFetchingThumb}
-                    className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-brand-red hover:text-brand-red-light disabled:opacity-40 transition-colors"
-                  >
-                    <RefreshCw
-                      className={`w-3 h-3 ${isFetchingThumb ? "animate-spin" : ""}`}
-                    />
-                    {isFetchingThumb ? "Fetching..." : "Re-fetch"}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  data-ocid="submit_modal.upload_button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  <Upload className="w-3 h-3" />
-                  Upload
-                </button>
-              </div>
-            </div>
 
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept=".mp4,video/mp4"
               onChange={handleFileChange}
               className="hidden"
-              aria-label="Upload thumbnail image"
+              aria-label="Upload MP4 video file"
             />
 
-            {/* Preview / placeholder */}
             <button
               type="button"
-              className="relative w-full border-2 border-dashed border-border rounded-sm overflow-hidden cursor-pointer group text-left"
+              data-ocid="submit_modal.upload_button"
               onClick={() => fileInputRef.current?.click()}
-              data-ocid="submit_modal.dropzone"
+              className="relative w-full border-2 border-dashed border-border rounded-sm overflow-hidden cursor-pointer group text-left hover:border-brand-red transition-colors"
             >
-              {isFetchingThumb || isProcessingFile ? (
-                <div className="flex flex-col items-center justify-center py-8 gap-2 text-muted-foreground">
-                  <Loader2 className="w-6 h-6 animate-spin text-brand-red" />
-                  <p className="text-xs font-bold uppercase tracking-wider">
-                    {isProcessingFile
-                      ? "Processing image..."
-                      : "Fetching thumbnail..."}
-                  </p>
-                </div>
-              ) : thumbnailPreview ? (
-                <div className="relative">
-                  <img
-                    src={thumbnailPreview}
-                    alt="Thumbnail preview"
-                    className="w-full aspect-video object-cover"
-                  />
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                    <p className="text-white text-xs font-black uppercase tracking-widest">
-                      Click to change
+              {mp4File ? (
+                <div className="flex items-center gap-3 px-4 py-5">
+                  <div className="w-9 h-9 rounded-sm bg-brand-red/10 flex items-center justify-center flex-shrink-0">
+                    <Video className="w-5 h-5 text-brand-red" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-foreground truncate">
+                      {mp4File.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {(mp4File.size / (1024 * 1024)).toFixed(1)} MB · .mp4
                     </p>
                   </div>
+                  <p className="ml-auto text-[10px] font-bold uppercase tracking-wider text-brand-red opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                    Change
+                  </p>
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-7 gap-2 text-muted-foreground">
+                <div className="flex flex-col items-center justify-center py-8 gap-2 text-muted-foreground">
                   <Upload className="w-7 h-7 opacity-40" />
                   <p className="text-xs font-bold uppercase tracking-wider">
-                    {platform !== "other" && url
-                      ? "Auto-fetch failed — click to upload manually"
-                      : "Click to upload thumbnail"}
+                    Click to select .mp4 file
                   </p>
-                  <p className="text-xs opacity-50">
-                    JPG, PNG, WEBP — max 10MB
-                  </p>
+                  <p className="text-xs opacity-50">MP4 format only</p>
                 </div>
               )}
             </button>
+          </div>
 
-            {uploadProgress > 0 && uploadProgress < 100 && (
-              <div className="w-full bg-secondary rounded-full h-1">
-                <div
-                  className="bg-brand-red h-1 rounded-full transition-all"
-                  style={{ width: `${uploadProgress}%` }}
-                />
-              </div>
-            )}
+          {/* Description */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              Description *
+            </Label>
+            <Textarea
+              data-ocid="submit_modal.textarea"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Describe what happens in the video..."
+              maxLength={500}
+              rows={4}
+              className="bg-secondary border-border text-sm focus-visible:ring-brand-red focus-visible:border-brand-red resize-none"
+            />
+            <p className="text-xs text-muted-foreground text-right">
+              {description.length} / 500
+            </p>
           </div>
 
           {/* Actions — sticky at bottom */}
@@ -593,16 +339,6 @@ export function VideoSubmitModal({
                 <>
                   <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
                   Submitting...
-                </>
-              ) : isFetchingThumb ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  Fetching...
-                </>
-              ) : isProcessingFile ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  Processing...
                 </>
               ) : (
                 "Submit Video"

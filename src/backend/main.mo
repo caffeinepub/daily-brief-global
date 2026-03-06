@@ -12,10 +12,7 @@ import AccessControl "authorization/access-control";
 import MixinStorage "blob-storage/Mixin";
 import Principal "mo:core/Principal";
 import Text "mo:core/Text";
-import Migration "migration";
 
-// Apply migration on upgrade
-(with migration = Migration.run)
 actor {
   include MixinStorage();
 
@@ -76,6 +73,7 @@ actor {
     thumbnail : Storage.ExternalBlob,
     viewCount : Nat,
   ) : async Video {
+    // No permission check - allow anonymous callers to submit videos
     let video : Video = {
       id = nextVideoId;
       title;
@@ -141,6 +139,9 @@ actor {
   };
 
   public shared ({ caller }) func likeVideo(videoId : Nat) : async ?Video {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can like videos");
+    };
     switch (approvedVideos.get(videoId)) {
       case (null) { Runtime.trap("Video not found") };
       case (?video) {
@@ -155,6 +156,9 @@ actor {
   };
 
   public shared ({ caller }) func addComment(videoId : Nat, text : Text) : async ?Comment {
+    if (not (AccessControl.hasPermission(accessControlState, caller, #user))) {
+      Runtime.trap("Unauthorized: Only users can add comments");
+    };
     switch (approvedVideos.get(videoId)) {
       case (null) { Runtime.trap("Video does not exist") };
       case (?_) {
@@ -189,11 +193,8 @@ actor {
     };
   };
 
-  public shared ({ caller }) func claimAdminWithToken(_userSecret : Text) : async () {
-    // Check if caller is anonymous - reject anonymous callers
-    if (caller.isAnonymous()) {
-      return;
-    };
-    Runtime.trap("Not supported yet");
+  public shared ({ caller }) func claimAdminWithToken(userSecret : Text) : async () {
+    if (caller.isAnonymous()) { return };
+    await _initializeAccessControlWithSecret(userSecret);
   };
 };

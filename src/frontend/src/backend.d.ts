@@ -51,7 +51,7 @@ export interface backendInterface {
     addComment(videoId: bigint, text: string): Promise<Comment | null>;
     approveVideo(id: bigint): Promise<void>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
-    claimAdminWithToken(_userSecret: string): Promise<void>;
+    claimAdminWithToken(userSecret: string): Promise<void>;
     getCallerUserRole(): Promise<UserRole>;
     getComments(videoId: bigint): Promise<Array<Comment>>;
     getFeaturedVideo(): Promise<Video | null>;

@@ -253,6 +253,7 @@ function NotAdminGate() {
       try {
         await initializeAdmin.mutateAsync("3049_ash");
         await queryClient.invalidateQueries({ queryKey: ["is_admin"] });
+        await queryClient.invalidateQueries({ queryKey: ["pending_videos"] });
       } catch (err) {
         const msg =
           err instanceof Error
@@ -263,7 +264,6 @@ function NotAdminGate() {
         setIsAutoClaimPending(false);
       }
     })();
-    // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally run only when identity changes
   }, [identity, initializeAdmin.mutateAsync, queryClient.invalidateQueries]);
 
   const handleRetry = () => {
@@ -275,6 +275,7 @@ function NotAdminGate() {
       try {
         await initializeAdmin.mutateAsync("3049_ash");
         await queryClient.invalidateQueries({ queryKey: ["is_admin"] });
+        await queryClient.invalidateQueries({ queryKey: ["pending_videos"] });
       } catch (err) {
         const msg =
           err instanceof Error
@@ -385,8 +386,16 @@ export function AdminPanel() {
     data: pendingVideos,
     isLoading: isPendingLoading,
     isError: isPendingError,
-  } = useGetPendingVideos();
+    refetch: refetchPending,
+  } = useGetPendingVideos(isAdmin === true);
   const [addVideoOpen, setAddVideoOpen] = useState(false);
+
+  // Re-fetch pending videos whenever admin status transitions to true
+  useEffect(() => {
+    if (isAdmin) {
+      void refetchPending();
+    }
+  }, [isAdmin, refetchPending]);
 
   const handleBackToSite = () => {
     const url = new URL(window.location.href);

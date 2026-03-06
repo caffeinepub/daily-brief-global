@@ -264,6 +264,8 @@ export function useSubmitVideo() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["videos"] });
       void queryClient.invalidateQueries({ queryKey: ["featured_video"] });
+      // Refresh admin panel so new submissions appear immediately
+      void queryClient.invalidateQueries({ queryKey: ["pending_videos"] });
     },
     onError: (err) => {
       console.error("useSubmitVideo error:", err);
@@ -299,17 +301,25 @@ export function useIsAdmin() {
   });
 }
 
-export function useGetPendingVideos() {
+export function useGetPendingVideos(isAdmin?: boolean) {
   const { actor, isFetching } = useActor();
   return useQuery<UIVideo[]>({
     queryKey: ["pending_videos"],
     queryFn: async () => {
       if (!actor) return [];
-      const videos = await actor.getPendingVideos();
-      return videos.map(toUIVideo);
+      try {
+        const videos = await actor.getPendingVideos();
+        return videos.map(toUIVideo);
+      } catch (err) {
+        // If not admin yet, return empty array instead of throwing
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("Unauthorized")) return [];
+        throw err;
+      }
     },
-    enabled: !!actor && !isFetching,
+    enabled: !!actor && !isFetching && isAdmin === true,
     staleTime: 10_000,
+    retry: false,
   });
 }
 

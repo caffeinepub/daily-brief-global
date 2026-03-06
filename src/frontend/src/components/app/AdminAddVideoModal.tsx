@@ -160,6 +160,7 @@ export function AdminAddVideoModal({
   onOpenChange,
 }: AdminAddVideoModalProps) {
   const [url, setUrl] = useState("");
+  const [instagramUrl, setInstagramUrl] = useState("");
   const [title, setTitle] = useState("");
   const [viewCount, setViewCount] = useState("0");
 
@@ -184,6 +185,7 @@ export function AdminAddVideoModal({
 
   const resetForm = useCallback(() => {
     setUrl("");
+    setInstagramUrl("");
     setTitle("");
     setViewCount("0");
     setThumbnailBytes(null);
@@ -309,13 +311,17 @@ export function AdminAddVideoModal({
       return;
     }
 
+    // If admin provided an Instagram embed URL, use that as the final URL
+    const finalUrl = instagramUrl.trim() ? instagramUrl.trim() : url.trim();
+    const finalPlatform = instagramUrl.trim() ? "instagram" : platform;
+
     try {
       await new Promise<void>((resolve, reject) => {
         publishVideo.mutate(
           {
             title: title.trim(),
-            url: url.trim(),
-            platform,
+            url: finalUrl,
+            platform: finalPlatform,
             thumbnailBytes,
             viewCount: BigInt(Math.max(0, Number.parseInt(viewCount, 10) || 0)),
             onProgress: setUploadProgress,
@@ -415,6 +421,38 @@ export function AdminAddVideoModal({
                 {" · "}
                 <span className="opacity-60">
                   thumbnail will be fetched automatically
+                </span>
+              </p>
+            )}
+          </div>
+
+          {/* Instagram Embed URL (optional) */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+              Instagram Embed URL{" "}
+              <span className="opacity-50 normal-case font-normal tracking-normal">
+                (optional)
+              </span>
+            </Label>
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2">
+                <Instagram className="w-4 h-4 text-pink-500" />
+              </div>
+              <Input
+                data-ocid="admin.add_video.instagram_url_input"
+                type="url"
+                value={instagramUrl}
+                onChange={(e) => setInstagramUrl(e.target.value)}
+                placeholder="https://www.instagram.com/p/... or /reel/..."
+                className="pl-9 bg-secondary border-border text-sm focus-visible:ring-brand-red focus-visible:border-brand-red"
+              />
+            </div>
+            {instagramUrl.trim() && (
+              <p className="text-xs text-muted-foreground">
+                <span className="text-pink-500 font-bold">Instagram</span>
+                {" · "}
+                <span className="opacity-60">
+                  This URL will override the video URL above for embedding
                 </span>
               </p>
             )}
